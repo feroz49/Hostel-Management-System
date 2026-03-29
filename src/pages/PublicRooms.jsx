@@ -1,8 +1,12 @@
-import { Link } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, BedDouble, Building2, ShieldCheck, Sparkles, Users } from 'lucide-react'
 import AnimatedBackdrop from '../components/layout/AnimatedBackdrop'
 import PublicNavbar from '../components/layout/PublicNavbar'
 import Footer from '../components/layout/Footer'
+import { getApiErrorMessage } from '../services/api'
+import publicRoomsService from '../services/publicRoomsService'
+import { handleRoomImageError } from '../utils/roomImageFallback'
 
 const roomTypes = [
   {
@@ -40,70 +44,64 @@ const features = [
   'Blocks, occupancy, and room details can be updated by admins',
 ]
 
-const roomGalleryPhotos = [
-  {
-    src: 'https://picsum.photos/seed/hostel-room-portfolio-01/1200/900',
-    alt: 'Room gallery photo 1',
-    title: 'Single Room Perspective',
-    note: 'A calmer room concept for residents who prefer privacy and focus.',
-  },
-  {
-    src: 'https://picsum.photos/seed/hostel-room-portfolio-02/1200/900',
-    alt: 'Room gallery photo 2',
-    title: 'Shared Room Layout',
-    note: 'A more balanced arrangement for practical shared accommodation.',
-  },
-  {
-    src: 'https://picsum.photos/seed/hostel-room-portfolio-03/1200/900',
-    alt: 'Room gallery photo 3',
-    title: 'Resident Comfort',
-    note: 'Comfort, order, and usability remain central to the room experience.',
-  },
-  {
-    src: 'https://picsum.photos/seed/hostel-room-portfolio-04/1200/900',
-    alt: 'Room gallery photo 4',
-    title: 'Clean Interior Tone',
-    note: 'A more professional visual presentation helps define accommodation quality.',
-  },
-  {
-    src: 'https://picsum.photos/seed/hostel-room-portfolio-05/1200/900',
-    alt: 'Room gallery photo 5',
-    title: 'Natural Light Setup',
-    note: 'Well-lit spaces support a calmer and more welcoming environment.',
-  },
-  {
-    src: 'https://picsum.photos/seed/hostel-room-portfolio-06/1200/900',
-    alt: 'Room gallery photo 6',
-    title: 'Functional Living Space',
-    note: 'Practical room organization supports daily resident routines.',
-  },
-  {
-    src: 'https://picsum.photos/seed/hostel-room-portfolio-07/1200/900',
-    alt: 'Room gallery photo 7',
-    title: 'Group Accommodation View',
-    note: 'Shared room concepts can still feel structured, clean, and comfortable.',
-  },
-  {
-    src: 'https://picsum.photos/seed/hostel-room-portfolio-08/1200/900',
-    alt: 'Room gallery photo 8',
-    title: 'Study-Friendly Corner',
-    note: 'Resident rooms should support both comfort and everyday productivity.',
-  },
-  {
-    src: 'https://picsum.photos/seed/hostel-room-portfolio-09/1200/900',
-    alt: 'Room gallery photo 9',
-    title: 'Modern Room Atmosphere',
-    note: 'Consistent visual quality helps communicate stronger facility standards.',
-  },
-  {
-    src: 'https://picsum.photos/seed/hostel-room-portfolio-10/1200/900',
-    alt: 'Room gallery photo 10',
-    title: 'Accommodation Showcase',
-    note: 'A broader gallery helps visitors understand the residential environment.',
-  },
+const defaultCategories = [
+  { value: 'single', label: 'Single Room' },
+  { value: 'double', label: 'Double Room' },
+  { value: 'triple', label: 'Triple Room' },
+  { value: 'shared', label: 'Shared Room' },
 ]
 
 const PublicRooms = () => {
+  const navigate = useNavigate()
+  const [selectedCategory, setSelectedCategory] = useState('single')
+  const [roomCategories, setRoomCategories] = useState(defaultCategories)
+  const [rooms, setRooms] = useState([])
+  const [loadingRooms, setLoadingRooms] = useState(true)
+  const [roomsError, setRoomsError] = useState('')
+
+  useEffect(() => {
+    let active = true
+
+    const fetchRooms = async () => {
+      setLoadingRooms(true)
+      setRoomsError('')
+
+      try {
+        const response = await publicRoomsService.getByCategory(selectedCategory)
+
+        if (!active) {
+          return
+        }
+
+        if (Array.isArray(response.categories) && response.categories.length > 0) {
+          setRoomCategories(response.categories)
+        }
+
+        setRooms(Array.isArray(response.rooms) ? response.rooms : [])
+      } catch (error) {
+        if (!active) {
+          return
+        }
+
+        setRooms([])
+        setRoomsError(getApiErrorMessage(error, 'Unable to load room options right now.'))
+      } finally {
+        if (active) {
+          setLoadingRooms(false)
+        }
+      }
+    }
+
+    fetchRooms()
+
+    return () => {
+      active = false
+    }
+  }, [selectedCategory])
+
+  const selectedCategoryLabel =
+    roomCategories.find((category) => category.value === selectedCategory)?.label || 'Single Room'
+
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-slate-50 text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
       <AnimatedBackdrop variant="public" />
@@ -195,36 +193,103 @@ const PublicRooms = () => {
               <div>
                 <p className="text-sm uppercase tracking-[0.35em] text-cyan-600 dark:text-cyan-300">Room Gallery</p>
                 <h3 className="mt-3 text-3xl font-black tracking-tight text-slate-900 dark:text-white">
-                  Ten additional views for the rooms page.
+                  Browse room cards by category.
                 </h3>
               </div>
               <p className="max-w-2xl text-sm leading-7 text-slate-500 dark:text-slate-400">
-                This gallery uses a separate image set from the other public pages so the rooms section feels
-                distinct and visually focused on accommodation.
+                Choose a category and the cards are now fetched live from backend with real availability status.
               </p>
             </div>
 
-            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-5">
-              {roomGalleryPhotos.map((photo) => (
-                <article
-                  key={photo.title}
-                  className="group overflow-hidden rounded-[1.6rem] border border-slate-200 bg-white/85 shadow-xl shadow-slate-200/60 backdrop-blur dark:border-white/10 dark:bg-white/5 dark:shadow-slate-950/20"
-                >
-                  <div className="overflow-hidden">
-                    <img
-                      src={photo.src}
-                      alt={photo.alt}
-                      loading="lazy"
-                      className="h-56 w-full object-cover transition duration-700 group-hover:scale-105"
-                    />
-                  </div>
-                  <div className="p-5">
-                    <h4 className="text-lg font-semibold text-slate-900 dark:text-white">{photo.title}</h4>
-                    <p className="mt-2 text-sm leading-7 text-slate-500 dark:text-slate-400">{photo.note}</p>
-                  </div>
-                </article>
-              ))}
+            <div className="mb-8 max-w-sm">
+              <label htmlFor="room-category" className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                Room Category
+              </label>
+              <select
+                id="room-category"
+                value={selectedCategory}
+                onChange={(event) => setSelectedCategory(event.target.value)}
+                className="mt-2 w-full rounded-xl border border-cyan-500/30 bg-slate-900 px-4 py-3 text-sm font-medium text-slate-100 outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-500/30"
+              >
+                {roomCategories.map((category) => (
+                  <option key={category.value} value={category.value}>
+                    {category.label}
+                  </option>
+                ))}
+              </select>
             </div>
+
+            <div className="mb-6">
+              <h4 className="text-xl font-semibold text-slate-900 dark:text-white">{selectedCategoryLabel} Options</h4>
+            </div>
+
+            {loadingRooms && (
+              <div className="rounded-2xl border border-cyan-500/20 bg-slate-900/70 p-8 text-center text-sm text-slate-300">
+                Loading room cards...
+              </div>
+            )}
+
+            {!loadingRooms && roomsError && (
+              <div className="rounded-2xl border border-red-500/30 bg-red-950/20 p-6 text-sm text-red-300">
+                {roomsError}
+              </div>
+            )}
+
+            {!loadingRooms && !roomsError && rooms.length === 0 && (
+              <div className="rounded-2xl border border-slate-300/20 bg-slate-900/60 p-6 text-sm text-slate-300">
+                No rooms found for this category right now.
+              </div>
+            )}
+
+            {!loadingRooms && !roomsError && rooms.length > 0 && (
+              <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+                {rooms.map((room) => {
+                  const isAvailable = Boolean(room.is_available)
+                  const availabilityLabel = room.availability_status || (isAvailable ? 'Available' : 'Unavailable')
+
+                  return (
+                    <article
+                      key={room.id}
+                      className="group overflow-hidden rounded-[1.6rem] border border-cyan-500/20 bg-slate-900/85 shadow-xl shadow-slate-950/40 backdrop-blur"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/rooms/${room.id}`)}
+                        className="block w-full text-left"
+                      >
+                        <div className="overflow-hidden rounded-t-[1.6rem]">
+                          <img
+                            src={room.image}
+                            alt={room.title}
+                            loading="lazy"
+                            onError={handleRoomImageError}
+                            className="h-56 w-full object-cover transition duration-700 group-hover:scale-105"
+                          />
+                        </div>
+                        <div className="p-5">
+                          <div className="flex items-start justify-between gap-3">
+                            <h4 className="text-xl font-semibold text-white">{room.title}</h4>
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                                isAvailable
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30'
+                                  : 'bg-rose-500/20 text-rose-300 border border-rose-400/30'
+                              }`}
+                            >
+                              {availabilityLabel}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-sm text-slate-300">{room.capacity}</p>
+                          <p className="mt-3 text-base font-semibold text-cyan-300">{room.price_range}</p>
+                          <p className="mt-3 text-sm leading-7 text-slate-400">{room.description}</p>
+                          <p className="mt-4 text-sm font-medium text-cyan-300">Click to view details</p>
+                        </div>
+                      </button>
+                    </article>
+                  )
+                })}
+              </div>
+            )}
           </section>
         </main>
 

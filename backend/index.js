@@ -20,10 +20,19 @@ const CLIENT_ORIGINS = [
   "http://localhost:3000",
 ].filter(Boolean);
 
+const LOCAL_ORIGIN_REGEX =
+  /^https?:\/\/((localhost|127\.0\.0\.1)|((10|192\.168)\.\d{1,3}\.\d{1,3})|(172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}))(:\d+)?$/i;
+
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || CLIENT_ORIGINS.length === 0 || CLIENT_ORIGINS.includes(origin)) {
+      const isAllowedLocalOrigin = origin && LOCAL_ORIGIN_REGEX.test(origin);
+      if (
+        !origin ||
+        CLIENT_ORIGINS.length === 0 ||
+        CLIENT_ORIGINS.includes(origin) ||
+        isAllowedLocalOrigin
+      ) {
         callback(null, true);
         return;
       }
@@ -39,8 +48,13 @@ const dbConfig = {
   password: process.env.DB_PASS,
   server: process.env.DB_SERVER,
   database: process.env.DB_NAME,
-  port: Number(process.env.DB_PORT || 1433),
+  ...(process.env.DB_INSTANCE
+    ? {}
+    : { port: Number(process.env.DB_PORT || 1433) }),
   options: {
+    ...(process.env.DB_INSTANCE
+      ? { instanceName: String(process.env.DB_INSTANCE).trim() }
+      : {}),
     encrypt: process.env.DB_ENCRYPT === "true",
     trustServerCertificate: process.env.DB_TRUST_CERTIFICATE !== "false",
   },
@@ -56,6 +70,7 @@ const missingDatabaseConfigMessage =
 
 let poolPromise = null;
 let userColumnsEnsured = false;
+let publicRoomShowcaseEnsured = false;
 
 const asyncHandler = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -114,6 +129,130 @@ const ensureUserColumns = async () => {
   `);
 
   userColumnsEnsured = true;
+};
+
+const ensurePublicRoomShowcaseTable = async () => {
+  if (publicRoomShowcaseEnsured) {
+    return;
+  }
+
+  const pool = await getPool();
+
+  await pool.request().query(`
+    IF OBJECT_ID('dbo.Public_Room_Showcase', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.Public_Room_Showcase (
+        Showcase_Room_id INT NOT NULL,
+        Category NVARCHAR(20) NOT NULL,
+        Room_Name NVARCHAR(120) NOT NULL,
+        Capacity_Label NVARCHAR(40) NOT NULL,
+        Price_Min INT NOT NULL,
+        Price_Max INT NOT NULL,
+        Price_Unit NVARCHAR(50) NOT NULL CONSTRAINT DF_Public_Room_Showcase_Price_Unit DEFAULT '/ month',
+        Description NVARCHAR(400) NOT NULL,
+        Image_Url NVARCHAR(600) NOT NULL,
+        Is_Available BIT NOT NULL CONSTRAINT DF_Public_Room_Showcase_Is_Available DEFAULT 1,
+        Sort_Order INT NOT NULL CONSTRAINT DF_Public_Room_Showcase_Sort_Order DEFAULT 1,
+        Created_At DATETIME NOT NULL CONSTRAINT DF_Public_Room_Showcase_Created_At DEFAULT GETDATE(),
+        CONSTRAINT PK_Public_Room_Showcase PRIMARY KEY (Showcase_Room_id),
+        CONSTRAINT CK_Public_Room_Showcase_Category CHECK (Category IN ('single', 'double', 'triple', 'shared')),
+        CONSTRAINT CK_Public_Room_Showcase_Price CHECK (Price_Min > 0 AND Price_Max >= Price_Min)
+      );
+
+      CREATE INDEX IX_Public_Room_Showcase_Category_Sort
+      ON dbo.Public_Room_Showcase (Category, Sort_Order);
+    END;
+
+    IF OBJECT_ID('dbo.Room_Booking_Request', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.Room_Booking_Request (
+        Booking_id INT IDENTITY(1,1) NOT NULL,
+        Showcase_Room_id INT NOT NULL,
+        User_id INT NOT NULL,
+        Requested_At DATETIME NOT NULL CONSTRAINT DF_Room_Booking_Request_Requested_At DEFAULT GETDATE(),
+        Status NVARCHAR(20) NOT NULL CONSTRAINT DF_Room_Booking_Request_Status DEFAULT 'Pending',
+        CONSTRAINT PK_Room_Booking_Request PRIMARY KEY (Booking_id),
+        CONSTRAINT FK_Room_Booking_Request_Showcase FOREIGN KEY (Showcase_Room_id)
+          REFERENCES dbo.Public_Room_Showcase(Showcase_Room_id),
+        CONSTRAINT FK_Room_Booking_Request_User FOREIGN KEY (User_id)
+          REFERENCES dbo.Users(id),
+        CONSTRAINT CK_Room_Booking_Request_Status CHECK (Status IN ('Pending', 'Approved', 'Rejected'))
+      );
+
+      CREATE INDEX IX_Room_Booking_Request_User_Status
+      ON dbo.Room_Booking_Request (User_id, Status);
+    END;
+  `);
+
+  const existingShowcaseRows = await queryOne(
+    "SELECT COUNT(*) AS total FROM Public_Room_Showcase"
+  );
+
+  if (Number(existingShowcaseRows?.total || 0) === 0) {
+    const seedRows = buildPublicRoomSeedRows();
+
+    for (const room of seedRows) {
+      await executeQuery(
+        `
+          INSERT INTO Public_Room_Showcase (
+            Showcase_Room_id,
+            Category,
+            Room_Name,
+            Capacity_Label,
+            Price_Min,
+            Price_Max,
+            Price_Unit,
+            Description,
+            Image_Url,
+            Is_Available,
+            Sort_Order
+          )
+          VALUES (
+            @id,
+            @category,
+            @roomName,
+            @capacityLabel,
+            @priceMin,
+            @priceMax,
+            @priceUnit,
+            @description,
+            @imageUrl,
+            @isAvailable,
+            @sortOrder
+          )
+        `,
+        (request) =>
+          request
+            .input("id", sql.Int, room.id)
+            .input("category", sql.NVarChar(20), room.category)
+            .input("roomName", sql.NVarChar(120), room.title)
+            .input("capacityLabel", sql.NVarChar(40), room.capacity)
+            .input("priceMin", sql.Int, room.priceMin)
+            .input("priceMax", sql.Int, room.priceMax)
+            .input("priceUnit", sql.NVarChar(50), room.priceUnit)
+            .input("description", sql.NVarChar(400), room.description)
+            .input("imageUrl", sql.NVarChar(600), room.image)
+            .input("isAvailable", sql.Bit, room.isAvailable ? 1 : 0)
+            .input("sortOrder", sql.Int, room.sortOrder)
+      );
+    }
+  }
+
+  for (const patch of PUBLIC_ROOM_IMAGE_PATCHES) {
+    await executeQuery(
+      `
+        UPDATE Public_Room_Showcase
+        SET Image_Url = @imageUrl
+        WHERE Room_Name = @roomName
+      `,
+      (request) =>
+        request
+          .input("roomName", sql.NVarChar(120), patch.title)
+          .input("imageUrl", sql.NVarChar(600), patch.image)
+    );
+  }
+
+  publicRoomShowcaseEnsured = true;
 };
 
 const requestWithInputs = (pool, applyInputs) => {
@@ -216,6 +355,374 @@ const DAY_ORDER_CASE = `
 const MESS_MEAL_TYPES = ["Breakfast", "Lunch", "Dinner"];
 const MAINTENANCE_STATUSES = ["Pending", "In Progress", "Completed"];
 const LEAVE_STATUSES = ["Pending", "Approved", "Rejected"];
+const BOOKING_REQUEST_STATUSES = ["Pending", "Approved", "Rejected"];
+const PUBLIC_ROOM_CATEGORIES = ["single", "double", "triple", "shared"];
+const PUBLIC_ROOM_CATEGORY_LABELS = {
+  single: "Single Room",
+  double: "Double Room",
+  triple: "Triple Room",
+  shared: "Shared Room",
+};
+
+const PUBLIC_ROOM_IMAGE_PATCHES = [
+  {
+    title: "Window View Single",
+    image:
+      "https://images.unsplash.com/photo-1560185007-cde436f6a4d0?auto=format&fit=crop&w=1200&q=80",
+  },
+  {
+    title: "Study Hub Triple",
+    image:
+      "https://images.unsplash.com/photo-1566665797739-1674de7a421a?auto=format&fit=crop&w=1200&q=80",
+  },
+  {
+    title: "Campus Triple Zone",
+    image:
+      "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=1200&q=80",
+  },
+  {
+    title: "Budget Shared Hall",
+    image:
+      "https://images.unsplash.com/photo-1519710164239-da123dc03ef4?auto=format&fit=crop&w=1200&q=80",
+  },
+];
+
+const PUBLIC_ROOM_SHOWCASE_TEMPLATES = {
+  single: [
+    {
+      title: "Solo Study Suite",
+      capacity: "Capacity: 1 person",
+      priceMin: 460,
+      priceMax: 540,
+      priceUnit: "/ month",
+      description: "Quiet private room with a single bed, personal desk, and soft warm lighting.",
+      image:
+        "https://images.unsplash.com/photo-1631049307264-da0ec9d70304?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Quiet Corner Single",
+      capacity: "Capacity: 1 person",
+      priceMin: 480,
+      priceMax: 590,
+      priceUnit: "/ month",
+      description: "Minimalist private room designed for focused study and low-noise living.",
+      image:
+        "https://images.unsplash.com/photo-1505693314120-0d443867891c?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Classic Solo Room",
+      capacity: "Capacity: 1 person",
+      priceMin: 430,
+      priceMax: 500,
+      priceUnit: "/ month",
+      description: "Budget-friendly private stay with essential storage and comfortable bedding.",
+      image:
+        "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Premium Single Loft",
+      capacity: "Capacity: 1 person",
+      priceMin: 520,
+      priceMax: 650,
+      priceUnit: "/ month",
+      description: "Spacious single room with upgraded interior finish and bright window corner.",
+      image:
+        "https://images.unsplash.com/photo-1484154218962-a197022b5858?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Serene Study Pod",
+      capacity: "Capacity: 1 person",
+      priceMin: 450,
+      priceMax: 530,
+      priceUnit: "/ month",
+      description: "Compact and calm room layout ideal for independent daily routines.",
+      image:
+        "https://images.unsplash.com/photo-1560185007-cde436f6a4d0?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Window View Single",
+      capacity: "Capacity: 1 person",
+      priceMin: 500,
+      priceMax: 620,
+      priceUnit: "/ month",
+      description: "Single occupancy room with city-view window, desk, and full-height wardrobe.",
+      image:
+        "https://images.unsplash.com/photo-1560185007-cde436f6a4d0?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Focus Elite Single",
+      capacity: "Capacity: 1 person",
+      priceMin: 540,
+      priceMax: 680,
+      priceUnit: "/ month",
+      description: "Premium one-person room for students who want privacy and an elevated setup.",
+      image:
+        "https://images.unsplash.com/photo-1505691938895-1758d7feb511?auto=format&fit=crop&w=1200&q=80",
+    },
+  ],
+  double: [
+    {
+      title: "Twin Comfort Room",
+      capacity: "Capacity: 2 people",
+      priceMin: 300,
+      priceMax: 380,
+      priceUnit: "/ person / month",
+      description: "Two-bed shared room with separate desks and balanced movement space.",
+      image:
+        "https://images.unsplash.com/photo-1595526114035-0d45ed16cfbf?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Partner Study Double",
+      capacity: "Capacity: 2 people",
+      priceMin: 330,
+      priceMax: 420,
+      priceUnit: "/ person / month",
+      description: "Practical two-person setup for roommates with mixed study schedules.",
+      image:
+        "https://images.unsplash.com/photo-1611892440504-42a792e24d32?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Urban Twin Space",
+      capacity: "Capacity: 2 people",
+      priceMin: 340,
+      priceMax: 430,
+      priceUnit: "/ person / month",
+      description: "Shared room with dual storage units and clean modern interior styling.",
+      image:
+        "https://images.unsplash.com/photo-1554995207-c18c203602cb?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Courtyard Double",
+      capacity: "Capacity: 2 people",
+      priceMin: 315,
+      priceMax: 395,
+      priceUnit: "/ person / month",
+      description: "Comfortable two-bed room with a shared wardrobe and long study desk.",
+      image:
+        "https://images.unsplash.com/photo-1496417263034-38ec4f0b665a?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Smart Twin Studio",
+      capacity: "Capacity: 2 people",
+      priceMin: 325,
+      priceMax: 410,
+      priceUnit: "/ person / month",
+      description: "Efficiently arranged room with strong natural light and tidy storage.",
+      image:
+        "https://images.unsplash.com/photo-1512918728675-ed5a9ecdebfd?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Balanced Buddy Room",
+      capacity: "Capacity: 2 people",
+      priceMin: 305,
+      priceMax: 390,
+      priceUnit: "/ person / month",
+      description: "A value-friendly double room with two beds and organized shared space.",
+      image:
+        "https://images.unsplash.com/photo-1486304873000-235643847519?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Premium Twin Suite",
+      capacity: "Capacity: 2 people",
+      priceMin: 360,
+      priceMax: 460,
+      priceUnit: "/ person / month",
+      description: "Higher-end double room with polished finish and wider study area.",
+      image:
+        "https://images.unsplash.com/photo-1501183638710-841dd1904471?auto=format&fit=crop&w=1200&q=80",
+    },
+  ],
+  triple: [
+    {
+      title: "Trio Standard Room",
+      capacity: "Capacity: 3 people",
+      priceMin: 240,
+      priceMax: 320,
+      priceUnit: "/ person / month",
+      description: "Three-bed room with grouped study setup and practical storage points.",
+      image:
+        "https://images.unsplash.com/photo-1566665797739-1674de7a421a?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Group Plus Triple",
+      capacity: "Capacity: 3 people",
+      priceMin: 260,
+      priceMax: 350,
+      priceUnit: "/ person / month",
+      description: "Social room category suited to students who enjoy active shared living.",
+      image:
+        "https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Study Hub Triple",
+      capacity: "Capacity: 3 people",
+      priceMin: 255,
+      priceMax: 340,
+      priceUnit: "/ person / month",
+      description: "Includes three desks, wall shelves, and comfortable shared floor area.",
+      image:
+        "https://images.unsplash.com/photo-1566665797739-1674de7a421a?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Budget Trio Stay",
+      capacity: "Capacity: 3 people",
+      priceMin: 220,
+      priceMax: 300,
+      priceUnit: "/ person / month",
+      description: "Cost-friendly triple occupancy with essential furniture and cozy beds.",
+      image:
+        "https://images.unsplash.com/photo-1584132967334-10e028bd69f7?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Campus Triple Zone",
+      capacity: "Capacity: 3 people",
+      priceMin: 250,
+      priceMax: 335,
+      priceUnit: "/ person / month",
+      description: "Designed for collaborative routines with reliable shared utility space.",
+      image:
+        "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Bright Trio Corner",
+      capacity: "Capacity: 3 people",
+      priceMin: 265,
+      priceMax: 355,
+      priceUnit: "/ person / month",
+      description: "Well-lit room with three beds and coordinated storage for daily comfort.",
+      image:
+        "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Premier Triple Room",
+      capacity: "Capacity: 3 people",
+      priceMin: 280,
+      priceMax: 370,
+      priceUnit: "/ person / month",
+      description: "Enhanced triple room with upgraded furnishing and organized layout flow.",
+      image:
+        "https://images.unsplash.com/photo-1505691938895-1758d7feb511?auto=format&fit=crop&w=1200&q=80",
+    },
+  ],
+  shared: [
+    {
+      title: "Shared Hall Classic",
+      capacity: "Capacity: 4+ people",
+      priceMin: 170,
+      priceMax: 250,
+      priceUnit: "/ person / month",
+      description: "Community-style room with multiple beds and practical shared storage racks.",
+      image:
+        "https://images.unsplash.com/photo-1555854877-bab0e564b8d5?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Social Shared Wing",
+      capacity: "Capacity: 4+ people",
+      priceMin: 180,
+      priceMax: 270,
+      priceUnit: "/ person / month",
+      description: "Great for residents who prefer social, affordable group accommodation.",
+      image:
+        "https://images.unsplash.com/photo-1521783593447-5702b9bfd267?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Economy Shared Zone",
+      capacity: "Capacity: 4+ people",
+      priceMin: 160,
+      priceMax: 230,
+      priceUnit: "/ person / month",
+      description: "Large occupancy setup with essential comfort and shared utility areas.",
+      image:
+        "https://images.unsplash.com/photo-1631679706909-1844bbd07221?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Shared Plus Dorm",
+      capacity: "Capacity: 4+ people",
+      priceMin: 190,
+      priceMax: 280,
+      priceUnit: "/ person / month",
+      description: "Improved dorm layout with better ventilation and flexible common storage.",
+      image:
+        "https://images.unsplash.com/photo-1578683010236-d716f9a3f461?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Community Loft Shared",
+      capacity: "Capacity: 4+ people",
+      priceMin: 175,
+      priceMax: 260,
+      priceUnit: "/ person / month",
+      description: "Loft-inspired shared room with multi-bed arrangement and central aisle.",
+      image:
+        "https://images.unsplash.com/photo-1519710164239-da123dc03ef4?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Open Dorm Study Bay",
+      capacity: "Capacity: 4+ people",
+      priceMin: 185,
+      priceMax: 275,
+      priceUnit: "/ person / month",
+      description: "Shared room with grouped desks, reading lights, and community atmosphere.",
+      image:
+        "https://images.unsplash.com/photo-1464890100898-a385f744067f?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      title: "Budget Shared Hall",
+      capacity: "Capacity: 4+ people",
+      priceMin: 155,
+      priceMax: 220,
+      priceUnit: "/ person / month",
+      description: "Most affordable shared option with clean setup and daily essentials.",
+      image:
+        "https://images.unsplash.com/photo-1519710164239-da123dc03ef4?auto=format&fit=crop&w=1200&q=80",
+    },
+  ],
+};
+
+const getRandomUnavailableIndexSet = (totalRooms) => {
+  if (!Number.isInteger(totalRooms) || totalRooms <= 1) {
+    return new Set();
+  }
+
+  const targetUnavailableCount = Math.floor(Math.random() * 3) + 1;
+  const unavailableCount = Math.min(targetUnavailableCount, totalRooms - 1);
+  const unavailableIndexes = new Set();
+
+  while (unavailableIndexes.size < unavailableCount) {
+    unavailableIndexes.add(Math.floor(Math.random() * totalRooms));
+  }
+
+  return unavailableIndexes;
+};
+
+const buildPublicRoomSeedRows = () => {
+  const rows = [];
+  let nextRoomId = 1;
+
+  for (const category of PUBLIC_ROOM_CATEGORIES) {
+    const templateRows = PUBLIC_ROOM_SHOWCASE_TEMPLATES[category] || [];
+    const unavailableIndexes = getRandomUnavailableIndexSet(templateRows.length);
+
+    templateRows.forEach((template, index) => {
+      rows.push({
+        id: nextRoomId,
+        category,
+        title: template.title,
+        capacity: template.capacity,
+        priceMin: template.priceMin,
+        priceMax: template.priceMax,
+        priceUnit: template.priceUnit,
+        description: template.description,
+        image: template.image,
+        isAvailable: !unavailableIndexes.has(index),
+        sortOrder: index + 1,
+      });
+
+      nextRoomId += 1;
+    });
+  }
+
+  return rows;
+};
 
 const isAllowedValue = (value, allowedValues) => allowedValues.includes(value);
 
@@ -251,6 +758,28 @@ const roomSelectQuery = `
     END AS status
   FROM Room r
   LEFT JOIN Hostel_Block hb ON hb.Block_id = r.Hostel_Block
+`;
+
+const publicRoomShowcaseSelectQuery = `
+  SELECT
+    prs.Showcase_Room_id AS id,
+    prs.Showcase_Room_id AS room_id,
+    prs.Category AS category,
+    prs.Room_Name AS title,
+    prs.Capacity_Label AS capacity,
+    prs.Price_Min AS price_min,
+    prs.Price_Max AS price_max,
+    prs.Price_Unit AS price_unit,
+    CONCAT('$', prs.Price_Min, ' - $', prs.Price_Max, ' ', prs.Price_Unit) AS price_range,
+    prs.Description AS description,
+    prs.Image_Url AS image,
+    prs.Is_Available AS is_available,
+    CASE
+      WHEN prs.Is_Available = 1 THEN 'Available'
+      ELSE 'Unavailable'
+    END AS availability_status,
+    prs.Sort_Order AS sort_order
+  FROM Public_Room_Showcase prs
 `;
 
 const blockSelectQuery = `
@@ -344,6 +873,11 @@ const getStudentById = (studentId) =>
 
 const getRoomById = (roomId) =>
   queryOne(`${roomSelectQuery} WHERE r.Room_id = @id`, (request) =>
+    request.input("id", sql.Int, roomId)
+  );
+
+const getPublicRoomById = (roomId) =>
+  queryOne(`${publicRoomShowcaseSelectQuery} WHERE prs.Showcase_Room_id = @id`, (request) =>
     request.input("id", sql.Int, roomId)
   );
 
@@ -2407,6 +2941,7 @@ app.get(
     try {
       await getPool();
       await ensureUserColumns();
+      await ensurePublicRoomShowcaseTable();
 
       res.json({
         status: "ok",
@@ -2434,6 +2969,140 @@ app.post("/api/auth/reset-password", asyncHandler(resetPassword));
 app.get("/api/auth/me", authenticateToken, asyncHandler(authMe));
 app.put("/api/auth/me", authenticateToken, asyncHandler(updateProfile));
 
+app.get(
+  "/api/public/rooms",
+  asyncHandler(async (req, res) => {
+    await ensurePublicRoomShowcaseTable();
+
+    const requestedCategory = normalizeString(req.query.category).toLowerCase();
+    const hasCategoryFilter = Boolean(requestedCategory);
+
+    if (hasCategoryFilter && !PUBLIC_ROOM_CATEGORIES.includes(requestedCategory)) {
+      res.status(400).json({
+        message: `Invalid category. Allowed values: ${PUBLIC_ROOM_CATEGORIES.join(", ")}.`,
+      });
+      return;
+    }
+
+    const whereClause = hasCategoryFilter ? "WHERE prs.Category = @category" : "";
+    const rows = await queryRows(
+      `${publicRoomShowcaseSelectQuery} ${whereClause} ORDER BY prs.Sort_Order, prs.Showcase_Room_id`,
+      hasCategoryFilter
+        ? (request) => request.input("category", sql.NVarChar(20), requestedCategory)
+        : undefined
+    );
+
+    res.json({
+      categories: PUBLIC_ROOM_CATEGORIES.map((category) => ({
+        value: category,
+        label: PUBLIC_ROOM_CATEGORY_LABELS[category] || category,
+      })),
+      rooms: rows,
+    });
+  })
+);
+
+app.get(
+  "/api/public/rooms/:id",
+  asyncHandler(async (req, res) => {
+    await ensurePublicRoomShowcaseTable();
+
+    const roomId = parsePositiveInt(req.params.id);
+
+    if (!roomId) {
+      res.status(400).json({ message: "A valid room ID is required." });
+      return;
+    }
+
+    const room = await getPublicRoomById(roomId);
+
+    if (!room) {
+      res.status(404).json({ message: "Room details not found." });
+      return;
+    }
+
+    res.json(room);
+  })
+);
+
+app.post(
+  "/api/public/rooms/:id/book",
+  authenticateToken,
+  asyncHandler(async (req, res) => {
+    await ensurePublicRoomShowcaseTable();
+
+    const roomId = parsePositiveInt(req.params.id);
+
+    if (!roomId) {
+      res.status(400).json({ message: "A valid room ID is required." });
+      return;
+    }
+
+    const room = await getPublicRoomById(roomId);
+
+    if (!room) {
+      res.status(404).json({ message: "Room details not found." });
+      return;
+    }
+
+    if (!room.is_available) {
+      res.status(400).json({ message: "This room is currently unavailable." });
+      return;
+    }
+
+    const userId = parsePositiveInt(req.user?.id);
+
+    if (!userId) {
+      res.status(401).json({ message: "You need to sign in before booking a room." });
+      return;
+    }
+
+    const pendingBooking = await queryOne(
+      `
+        SELECT TOP 1 Booking_id AS booking_id
+        FROM Room_Booking_Request
+        WHERE Showcase_Room_id = @roomId
+          AND User_id = @userId
+          AND Status = 'Pending'
+      `,
+      (request) =>
+        request
+          .input("roomId", sql.Int, roomId)
+          .input("userId", sql.Int, userId)
+    );
+
+    if (pendingBooking) {
+      res.status(409).json({ message: "You already have a pending booking request for this room." });
+      return;
+    }
+
+    const insertResult = await executeQuery(
+      `
+        INSERT INTO Room_Booking_Request (Showcase_Room_id, User_id, Status)
+        OUTPUT INSERTED.Booking_id AS booking_id, INSERTED.Status AS status, INSERTED.Requested_At AS requested_at
+        VALUES (@roomId, @userId, @status)
+      `,
+      (request) =>
+        request
+          .input("roomId", sql.Int, roomId)
+          .input("userId", sql.Int, userId)
+          .input("status", sql.NVarChar(20), BOOKING_REQUEST_STATUSES[0])
+    );
+
+    const booking = insertResult.recordset?.[0] || null;
+
+    res.status(201).json({
+      message: "Booking request sent successfully.",
+      booking,
+      room: {
+        id: room.id,
+        title: room.title,
+        category: room.category,
+      },
+    });
+  })
+);
+
 app.use("/api", protectedRouter);
 
 app.use((error, req, res, next) => {
@@ -2459,6 +3128,7 @@ app.listen(PORT, () => {
 
   getPool()
     .then(() => ensureUserColumns())
+    .then(() => ensurePublicRoomShowcaseTable())
     .catch((error) => {
       console.error("DB Connection Failed:", error.message);
     });

@@ -10,9 +10,19 @@ export const clearStoredSession = () => {
   localStorage.removeItem(STORAGE_KEYS.user)
 }
 
+const getDefaultApiBaseUrl = () => {
+  if (typeof window === 'undefined') {
+    return 'http://localhost:5000/api'
+  }
+
+  const { protocol, hostname } = window.location
+  return `${protocol}//${hostname}:5000/api`
+}
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || getDefaultApiBaseUrl()
+
 export const getApiOrigin = () => {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'
-  return baseUrl.replace(/\/api\/?$/, '')
+  return API_BASE_URL.replace(/\/api\/?$/, '')
 }
 
 export const getApiErrorMessage = (error, fallbackMessage = 'Something went wrong.') => {
@@ -28,7 +38,7 @@ export const getApiErrorMessage = (error, fallbackMessage = 'Something went wron
 }
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },

@@ -4,6 +4,7 @@ import Home from './pages/Home'
 import About from './pages/About'
 import Contact from './pages/Contact'
 import PublicRooms from './pages/PublicRooms'
+import PublicRoomDetails from './pages/PublicRoomDetails'
 import Dashboard from './pages/dashboard'
 import Students from './pages/Students'
 import Rooms from './pages/Rooms'
@@ -33,6 +34,7 @@ const AppContent = () => {
       <Route path="/" element={<Home />} />
       <Route path="/about" element={<About />} />
       <Route path="/rooms" element={<PublicRooms />} />
+      <Route path="/rooms/:roomId" element={<PublicRoomDetails />} />
       <Route path="/contact" element={<Contact />} />
       <Route
         path="/login"
