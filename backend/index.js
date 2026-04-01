@@ -1153,7 +1153,7 @@ const registerUser = async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  const fullName = getDisplayName(email);
+  const fullName = getDisplayName(email); 
   const insertResult = await pool
     .request()
     .input("email", sql.NVarChar, email)
