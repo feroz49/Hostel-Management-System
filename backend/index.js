@@ -70,7 +70,9 @@ const missingDatabaseConfigMessage =
 
 let poolPromise = null;
 let userColumnsEnsured = false;
+let studentsTableEnsured = false;
 let publicRoomShowcaseEnsured = false;
+const STUDENT_TABLE = "Students";
 
 const asyncHandler = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -129,6 +131,118 @@ const ensureUserColumns = async () => {
   `);
 
   userColumnsEnsured = true;
+};
+
+const ensureStudentsTable = async () => {
+  if (studentsTableEnsured) {
+    return;
+  }
+
+  const pool = await getPool();
+
+  await pool.request().query(`
+    IF OBJECT_ID('dbo.Students', 'U') IS NULL AND OBJECT_ID('dbo.Student', 'U') IS NOT NULL
+    BEGIN
+      EXEC sp_rename 'dbo.Student', 'Students';
+    END;
+
+    IF OBJECT_ID('dbo.Students', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.Students (
+        Student_id INT NOT NULL,
+        Name NVARCHAR(100) NOT NULL,
+        Email NVARCHAR(100) NULL,
+        PhoneNumber NVARCHAR(30) NULL,
+        Room_id INT NULL,
+        Guardian_Contact NVARCHAR(20) NULL,
+        PasswordHash NVARCHAR(255) NULL,
+        JwtToken NVARCHAR(500) NULL,
+        PasswordResetCodeHash NVARCHAR(255) NULL,
+        PasswordResetExpiresAt DATETIME NULL,
+        CreatedAt DATETIME NOT NULL CONSTRAINT DF_Students_CreatedAt DEFAULT GETDATE(),
+        LastLogin DATETIME NULL,
+        CONSTRAINT PK_Students PRIMARY KEY (Student_id),
+        CONSTRAINT FK_Students_Room FOREIGN KEY (Room_id) REFERENCES dbo.Room(Room_id)
+      );
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'Email') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD Email NVARCHAR(100) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'PhoneNumber') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD PhoneNumber NVARCHAR(30) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'PasswordHash') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD PasswordHash NVARCHAR(255) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'JwtToken') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD JwtToken NVARCHAR(500) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'PasswordResetCodeHash') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD PasswordResetCodeHash NVARCHAR(255) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'PasswordResetExpiresAt') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD PasswordResetExpiresAt DATETIME NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'CreatedAt') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students
+      ADD CreatedAt DATETIME NOT NULL CONSTRAINT DF_Students_CreatedAt_Default DEFAULT GETDATE();
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'LastLogin') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD LastLogin DATETIME NULL;
+    END;
+
+    IF EXISTS (
+      SELECT 1
+      FROM sys.columns
+      WHERE object_id = OBJECT_ID('dbo.Students')
+        AND name = 'Room_id'
+        AND is_nullable = 0
+    )
+    BEGIN
+      ALTER TABLE dbo.Students ALTER COLUMN Room_id INT NULL;
+    END;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM sys.indexes
+      WHERE object_id = OBJECT_ID('dbo.Students')
+        AND name = 'UQ_Students_Email'
+    )
+    BEGIN
+      CREATE UNIQUE INDEX UQ_Students_Email
+      ON dbo.Students (Email)
+      WHERE Email IS NOT NULL;
+    END;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM sys.indexes
+      WHERE object_id = OBJECT_ID('dbo.Students')
+        AND name IN ('IX_Students_Room_id', 'IX_Student_Room_id')
+    )
+    BEGIN
+      CREATE INDEX IX_Students_Room_id
+      ON dbo.Students (Room_id);
+    END;
+  `);
+
+  studentsTableEnsured = true;
 };
 
 const ensurePublicRoomShowcaseTable = async () => {
@@ -731,12 +845,16 @@ const studentSelectQuery = `
     s.Student_id AS id,
     s.Student_id AS student_id,
     s.Name AS name,
+    s.Email AS email,
     s.Room_id AS room_id,
     r.Room_Number AS room_number,
     hb.Block_Name AS block_name,
     s.Guardian_Contact AS guardian_contact,
-    'Active' AS status
-  FROM Student s
+    CASE
+      WHEN s.Room_id IS NULL THEN 'Pending Room Assignment'
+      ELSE 'Active'
+    END AS status
+  FROM ${STUDENT_TABLE} s
   LEFT JOIN Room r ON r.Room_id = s.Room_id
   LEFT JOIN Hostel_Block hb ON hb.Block_id = r.Hostel_Block
 `;
@@ -801,7 +919,7 @@ const visitorSelectQuery = `
     v.Date_time_Exit AS exit_time,
     v.Purpose AS purpose
   FROM Visitor v
-  LEFT JOIN Student s ON s.Student_id = v.Student_id
+  LEFT JOIN ${STUDENT_TABLE} s ON s.Student_id = v.Student_id
 `;
 
 const paymentSelectQuery = `
@@ -815,7 +933,7 @@ const paymentSelectQuery = `
     p.[Month] AS [month],
     'Paid' AS status
   FROM Payment p
-  LEFT JOIN Student s ON s.Student_id = p.Student_id
+  LEFT JOIN ${STUDENT_TABLE} s ON s.Student_id = p.Student_id
 `;
 
 const feeSelectQuery = `
@@ -863,7 +981,7 @@ const leaveSelectQuery = `
     l.reason AS reason,
     l.Status AS status
   FROM Leave_Request l
-  LEFT JOIN Student s ON s.Student_id = l.student_id
+  LEFT JOIN ${STUDENT_TABLE} s ON s.Student_id = l.student_id
 `;
 
 const getStudentById = (studentId) =>
@@ -928,7 +1046,7 @@ const getRoomAvailability = (roomId, excludedStudentId = null) => {
         r.Capacity AS capacity,
         (
           SELECT COUNT(*)
-          FROM Student s
+          FROM ${STUDENT_TABLE} s
           WHERE s.Room_id = r.Room_id ${exclusionClause}
         ) AS current_occupancy
       FROM Room r
@@ -948,7 +1066,7 @@ const getRoomAvailability = (roomId, excludedStudentId = null) => {
 
 const getStudentCountForRoom = async (roomId) => {
   const row = await queryOne(
-    "SELECT COUNT(*) AS total FROM Student WHERE Room_id = @roomId",
+    `SELECT COUNT(*) AS total FROM ${STUDENT_TABLE} WHERE Room_id = @roomId`,
     (request) => request.input("roomId", sql.Int, roomId)
   );
 
@@ -964,7 +1082,7 @@ const syncRoomOccupancy = async (roomIds = []) => {
         UPDATE Room
         SET Current_Occupancy = (
           SELECT COUNT(*)
-          FROM Student
+          FROM ${STUDENT_TABLE}
           WHERE Room_id = @roomId
         )
         WHERE Room_id = @roomId
@@ -1013,6 +1131,7 @@ const getDisplayName = (email) =>
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 const getUserName = (user) => normalizeString(user.fullName) || getDisplayName(user.email);
+const getStudentName = (student) => normalizeString(student.Name || student.name);
 
 const hashResetCode = (code) =>
   crypto.createHash("sha256").update(code).digest("hex");
@@ -1103,6 +1222,34 @@ const buildAuthPayload = (user) => {
   return { token, user: normalizedUser };
 };
 
+const buildStudentAuthPayload = (student) => {
+  const normalizedStudent = {
+    id: student.Student_id ?? student.student_id ?? student.id,
+    email: student.Email ?? student.email ?? null,
+    name: getStudentName(student),
+    phoneNumber: student.PhoneNumber ?? student.phoneNumber ?? null,
+    guardianContact:
+      student.Guardian_Contact ??
+      student.guardian_contact ??
+      student.guardianContact ??
+      null,
+    roomId: student.Room_id ?? student.room_id ?? null,
+    role: "Student",
+  };
+
+  const token = jwt.sign(
+    {
+      id: normalizedStudent.id,
+      email: normalizedStudent.email,
+      role: normalizedStudent.role,
+    },
+    JWT_SECRET,
+    { expiresIn: "2h" }
+  );
+
+  return { token, user: normalizedStudent };
+};
+
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.startsWith("Bearer ")
@@ -1121,6 +1268,17 @@ const authenticateToken = (req, res, next) => {
     res.status(401).json({ message: "Your session has expired. Please sign in again." });
   }
 };
+
+const authorizeRoles =
+  (...allowedRoles) =>
+  (req, res, next) => {
+    if (!allowedRoles.includes(req.user?.role)) {
+      res.status(403).json({ message: "You do not have access to this resource." });
+      return;
+    }
+
+    next();
+  };
 
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const validatePhoneNumber = (phoneNumber) => /^\+?[\d\s()-]{7,20}$/.test(phoneNumber);
@@ -1441,15 +1599,516 @@ const updateProfile = async (req, res) => {
   });
 };
 
+const getStudentAuthProfileById = (studentId) =>
+  queryOne(
+    `
+      SELECT
+        s.Student_id AS id,
+        s.Student_id AS student_id,
+        s.Name AS name,
+        s.Email AS email,
+        s.PhoneNumber AS phone_number,
+        s.Guardian_Contact AS guardian_contact,
+        s.Room_id AS room_id,
+        s.LastLogin AS last_login,
+        r.Room_Number AS room_number,
+        r.Type AS room_type,
+        r.Capacity AS room_capacity,
+        r.Current_Occupancy AS current_occupancy,
+        hb.Block_Name AS block_name
+      FROM ${STUDENT_TABLE} s
+      LEFT JOIN Room r ON r.Room_id = s.Room_id
+      LEFT JOIN Hostel_Block hb ON hb.Block_id = r.Hostel_Block
+      WHERE s.Student_id = @studentId
+    `,
+    (request) => request.input("studentId", sql.Int, studentId)
+  );
+
+const registerStudent = async (req, res) => {
+  const name = normalizeString(req.body.name);
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const phoneNumber = normalizeNullableString(req.body.phoneNumber);
+  const guardianContact = normalizeNullableString(
+    req.body.guardianContact ?? req.body.guardian_contact
+  );
+  const password = String(req.body.password || "");
+  const confirmPassword = String(req.body.confirmPassword || req.body.password_confirmation || "");
+  const rawRoomId = req.body.room_id ?? req.body.roomId;
+  const roomId =
+    rawRoomId === null || rawRoomId === undefined || rawRoomId === ""
+      ? null
+      : parsePositiveInt(rawRoomId);
+
+  if (!name) {
+    res.status(400).json({ message: "Student name is required." });
+    return;
+  }
+
+  if (!validateEmail(email)) {
+    res.status(400).json({ message: "Please enter a valid email address." });
+    return;
+  }
+
+  if (phoneNumber && !validatePhoneNumber(phoneNumber)) {
+    res.status(400).json({ message: "Please enter a valid phone number." });
+    return;
+  }
+
+  if (rawRoomId !== null && rawRoomId !== undefined && rawRoomId !== "" && !roomId) {
+    res.status(400).json({ message: "Please choose a valid room." });
+    return;
+  }
+
+  if (password.length < 6) {
+    res.status(400).json({ message: "Password must be at least 6 characters long." });
+    return;
+  }
+
+  if (confirmPassword && password !== confirmPassword) {
+    res.status(400).json({ message: "Passwords do not match." });
+    return;
+  }
+
+  await ensureStudentsTable();
+
+  const pool = await getPool();
+  const existingStudent = await queryOne(
+    `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Email = @email`,
+    (request) => request.input("email", sql.NVarChar(100), email)
+  );
+
+  if (existingStudent) {
+    res.status(409).json({ message: "An account with this email already exists." });
+    return;
+  }
+
+  if (roomId) {
+    const roomAvailability = await getRoomAvailability(roomId);
+
+    if (!roomAvailability) {
+      res.status(400).json({ message: "The selected room does not exist." });
+      return;
+    }
+
+    if (Number(roomAvailability.current_occupancy || 0) >= Number(roomAvailability.capacity || 0)) {
+      res.status(400).json({ message: "The selected room is already full." });
+      return;
+    }
+  }
+
+  const studentId = await getNextId(STUDENT_TABLE, "Student_id");
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  const insertResult = await pool
+    .request()
+    .input("studentId", sql.Int, studentId)
+    .input("name", sql.NVarChar(100), name)
+    .input("email", sql.NVarChar(100), email)
+    .input("phoneNumber", sql.NVarChar(30), phoneNumber)
+    .input("roomId", sql.Int, roomId)
+    .input("guardianContact", sql.NVarChar(20), guardianContact)
+    .input("passwordHash", sql.NVarChar(255), passwordHash)
+    .query(`
+      INSERT INTO ${STUDENT_TABLE} (
+        Student_id,
+        Name,
+        Email,
+        PhoneNumber,
+        Room_id,
+        Guardian_Contact,
+        PasswordHash
+      )
+      OUTPUT
+        INSERTED.Student_id,
+        INSERTED.Name,
+        INSERTED.Email,
+        INSERTED.PhoneNumber,
+        INSERTED.Room_id,
+        INSERTED.Guardian_Contact
+      VALUES (
+        @studentId,
+        @name,
+        @email,
+        @phoneNumber,
+        @roomId,
+        @guardianContact,
+        @passwordHash
+      );
+    `);
+
+  const createdStudent = insertResult.recordset[0];
+  const { token, user } = buildStudentAuthPayload(createdStudent);
+
+  await pool
+    .request()
+    .input("studentId", sql.Int, studentId)
+    .input("token", sql.NVarChar(500), token)
+    .query(`
+      UPDATE ${STUDENT_TABLE}
+      SET JwtToken = @token,
+          LastLogin = GETDATE()
+      WHERE Student_id = @studentId;
+    `);
+
+  if (roomId) {
+    await syncRoomOccupancy([roomId]);
+  }
+
+  res.status(201).json({
+    message: "Student registration successful.",
+    token,
+    user,
+  });
+};
+
+const loginStudent = async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const password = String(req.body.password || "");
+
+  if (!validateEmail(email) || !password) {
+    res.status(400).json({ message: "Email and password are required." });
+    return;
+  }
+
+  await ensureStudentsTable();
+
+  const pool = await getPool();
+  const studentRecord = await queryOne(
+    `SELECT * FROM ${STUDENT_TABLE} WHERE Email = @email`,
+    (request) => request.input("email", sql.NVarChar(100), email)
+  );
+
+  if (!studentRecord || !studentRecord.PasswordHash) {
+    res.status(404).json({ message: "Student account not found." });
+    return;
+  }
+
+  const passwordMatches = await bcrypt.compare(password, studentRecord.PasswordHash);
+
+  if (!passwordMatches) {
+    res.status(401).json({ message: "Invalid password." });
+    return;
+  }
+
+  const { token, user } = buildStudentAuthPayload(studentRecord);
+
+  await pool
+    .request()
+    .input("studentId", sql.Int, studentRecord.Student_id)
+    .input("token", sql.NVarChar(500), token)
+    .query(`
+      UPDATE ${STUDENT_TABLE}
+      SET JwtToken = @token,
+          LastLogin = GETDATE()
+      WHERE Student_id = @studentId;
+    `);
+
+  res.json({
+    message: "Student login successful.",
+    token,
+    user,
+  });
+};
+
+const forgotStudentPassword = async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+
+  if (!validateEmail(email)) {
+    res.status(400).json({ message: "Please enter a valid email address." });
+    return;
+  }
+
+  await ensureStudentsTable();
+
+  const pool = await getPool();
+  const studentRecord = await queryOne(
+    `SELECT Student_id AS student_id, Email AS email FROM ${STUDENT_TABLE} WHERE Email = @email`,
+    (request) => request.input("email", sql.NVarChar(100), email)
+  );
+
+  if (!studentRecord) {
+    res.status(404).json({ message: "No student account was found for this email address." });
+    return;
+  }
+
+  const resetCode = generateResetCode();
+  const resetCodeHash = hashResetCode(resetCode);
+  const expiresAt = new Date(Date.now() + RESET_CODE_TTL_MINUTES * 60 * 1000);
+
+  await pool
+    .request()
+    .input("studentId", sql.Int, studentRecord.student_id)
+    .input("passwordResetCodeHash", sql.NVarChar(255), resetCodeHash)
+    .input("passwordResetExpiresAt", sql.DateTime, expiresAt)
+    .query(`
+      UPDATE ${STUDENT_TABLE}
+      SET PasswordResetCodeHash = @passwordResetCodeHash,
+          PasswordResetExpiresAt = @passwordResetExpiresAt
+      WHERE Student_id = @studentId;
+    `);
+
+  const emailResult = await sendResetEmail({
+    email,
+    code: resetCode,
+    expiresAt,
+  });
+
+  res.json({
+    message: emailResult.delivered
+      ? "A reset code has been sent to the student's email."
+      : "Reset code generated. Configure SMTP to deliver emails automatically.",
+    email,
+    emailSent: emailResult.delivered,
+    previewResetCode: emailResult.previewOnly ? resetCode : undefined,
+    expiresAt: expiresAt.toISOString(),
+  });
+};
+
+const resetStudentPassword = async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const code = String(req.body.code || "").trim();
+  const password = String(req.body.password || "");
+  const confirmPassword = String(req.body.confirmPassword || req.body.password_confirmation || "");
+
+  if (!validateEmail(email)) {
+    res.status(400).json({ message: "Please enter a valid email address." });
+    return;
+  }
+
+  if (!code) {
+    res.status(400).json({ message: "Reset code is required." });
+    return;
+  }
+
+  if (password.length < 6) {
+    res.status(400).json({ message: "Password must be at least 6 characters long." });
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    res.status(400).json({ message: "Passwords do not match." });
+    return;
+  }
+
+  await ensureStudentsTable();
+
+  const pool = await getPool();
+  const studentRecord = await queryOne(
+    `
+      SELECT Student_id AS student_id, PasswordResetCodeHash, PasswordResetExpiresAt
+      FROM ${STUDENT_TABLE}
+      WHERE Email = @email
+    `,
+    (request) => request.input("email", sql.NVarChar(100), email)
+  );
+
+  if (!studentRecord || !studentRecord.PasswordResetCodeHash) {
+    res.status(400).json({ message: "No active password reset request was found for this email." });
+    return;
+  }
+
+  const isExpired =
+    !studentRecord.PasswordResetExpiresAt ||
+    new Date(studentRecord.PasswordResetExpiresAt).getTime() < Date.now();
+
+  if (isExpired) {
+    res.status(400).json({ message: "This reset code has expired. Please request a new one." });
+    return;
+  }
+
+  if (hashResetCode(code) !== studentRecord.PasswordResetCodeHash) {
+    res.status(400).json({ message: "The reset code is invalid." });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  await pool
+    .request()
+    .input("studentId", sql.Int, studentRecord.student_id)
+    .input("passwordHash", sql.NVarChar(255), passwordHash)
+    .query(`
+      UPDATE ${STUDENT_TABLE}
+      SET PasswordHash = @passwordHash,
+          JwtToken = NULL,
+          PasswordResetCodeHash = NULL,
+          PasswordResetExpiresAt = NULL
+      WHERE Student_id = @studentId;
+    `);
+
+  res.json({ message: "Student password reset successful. You can sign in now." });
+};
+
+const studentAuthMe = async (req, res) => {
+  await ensureStudentsTable();
+
+  const currentStudent = await getStudentAuthProfileById(req.user.id);
+
+  if (!currentStudent) {
+    res.status(404).json({ message: "Student account not found." });
+    return;
+  }
+
+  res.json({
+    id: currentStudent.student_id,
+    email: currentStudent.email,
+    name: currentStudent.name,
+    phoneNumber: currentStudent.phone_number || null,
+    guardianContact: currentStudent.guardian_contact || null,
+    roomId: currentStudent.room_id || null,
+    role: "Student",
+    lastLogin: currentStudent.last_login,
+  });
+};
+
+const updateStudentProfile = async (req, res) => {
+  await ensureStudentsTable();
+
+  const name = normalizeString(req.body.name);
+  const phoneNumber = normalizeNullableString(req.body.phoneNumber);
+  const guardianContact = normalizeNullableString(
+    req.body.guardianContact ?? req.body.guardian_contact
+  );
+
+  if (!name) {
+    res.status(400).json({ message: "Name is required." });
+    return;
+  }
+
+  if (phoneNumber && !validatePhoneNumber(phoneNumber)) {
+    res.status(400).json({ message: "Please enter a valid phone number." });
+    return;
+  }
+
+  await executeQuery(
+    `
+      UPDATE ${STUDENT_TABLE}
+      SET Name = @name,
+          PhoneNumber = @phoneNumber,
+          Guardian_Contact = @guardianContact
+      WHERE Student_id = @studentId
+    `,
+    (request) =>
+      request
+        .input("studentId", sql.Int, req.user.id)
+        .input("name", sql.NVarChar(100), name)
+        .input("phoneNumber", sql.NVarChar(30), phoneNumber)
+        .input("guardianContact", sql.NVarChar(20), guardianContact)
+  );
+
+  const updatedStudent = await getStudentAuthProfileById(req.user.id);
+
+  if (!updatedStudent) {
+    res.status(404).json({ message: "Student account not found." });
+    return;
+  }
+
+  res.json({
+    id: updatedStudent.student_id,
+    email: updatedStudent.email,
+    name: updatedStudent.name,
+    phoneNumber: updatedStudent.phone_number || null,
+    guardianContact: updatedStudent.guardian_contact || null,
+    roomId: updatedStudent.room_id || null,
+    role: "Student",
+    lastLogin: updatedStudent.last_login,
+    message: "Profile updated successfully.",
+  });
+};
+
+const getStudentDashboard = async (req, res) => {
+  await ensureStudentsTable();
+
+  const studentId = parsePositiveInt(req.user?.id);
+
+  if (!studentId) {
+    res.status(401).json({ message: "Student authentication is required." });
+    return;
+  }
+
+  const profile = await getStudentAuthProfileById(studentId);
+
+  if (!profile) {
+    res.status(404).json({ message: "Student account not found." });
+    return;
+  }
+
+  const [paymentSummary, leaveSummary, recentPayments, recentLeaves, roommateSummary] =
+    await Promise.all([
+      queryOne(
+        `
+          SELECT
+            COUNT(*) AS payment_records,
+            ISNULL(SUM(Amount), 0) AS total_paid
+          FROM Payment
+          WHERE Student_id = @studentId
+        `,
+        (request) => request.input("studentId", sql.Int, studentId)
+      ),
+      queryOne(
+        `
+          SELECT
+            COUNT(*) AS total_leaves,
+            SUM(CASE WHEN Status = 'Pending' THEN 1 ELSE 0 END) AS pending_leaves,
+            SUM(CASE WHEN Status = 'Approved' THEN 1 ELSE 0 END) AS approved_leaves
+          FROM Leave_Request
+          WHERE student_id = @studentId
+        `,
+        (request) => request.input("studentId", sql.Int, studentId)
+      ),
+      queryRows(
+        `${paymentSelectQuery} WHERE p.Student_id = @studentId ORDER BY p.Payment_Date DESC, p.Payment_id DESC`,
+        (request) => request.input("studentId", sql.Int, studentId)
+      ),
+      queryRows(
+        `${leaveSelectQuery} WHERE l.student_id = @studentId ORDER BY l.from_date DESC, l.leave_id DESC`,
+        (request) => request.input("studentId", sql.Int, studentId)
+      ),
+      profile.room_id
+        ? queryOne(
+            `
+              SELECT COUNT(*) AS roommates
+              FROM ${STUDENT_TABLE}
+              WHERE Room_id = @roomId
+            `,
+            (request) => request.input("roomId", sql.Int, profile.room_id)
+          )
+        : Promise.resolve({ roommates: 0 }),
+    ]);
+
+  res.json({
+    profile,
+    summary: {
+      paymentRecords: Number(paymentSummary?.payment_records || 0),
+      totalPaid: Number(paymentSummary?.total_paid || 0),
+      totalLeaves: Number(leaveSummary?.total_leaves || 0),
+      pendingLeaves: Number(leaveSummary?.pending_leaves || 0),
+      approvedLeaves: Number(leaveSummary?.approved_leaves || 0),
+      roommates: profile.room_id
+        ? Math.max(Number(roommateSummary?.roommates || 0) - 1, 0)
+        : 0,
+    },
+    recentPayments: recentPayments.slice(0, 5),
+    recentLeaveRequests: recentLeaves.slice(0, 5),
+  });
+};
+
 const protectedRouter = express.Router();
 protectedRouter.use(authenticateToken);
+protectedRouter.use(authorizeRoles("Admin"));
+protectedRouter.use(
+  asyncHandler(async (req, res, next) => {
+    await ensureStudentsTable();
+    next();
+  })
+);
 
 protectedRouter.get(
   "/dashboard/summary",
   asyncHandler(async (req, res) => {
     const summary = await queryOne(`
       SELECT
-        (SELECT COUNT(*) FROM Student) AS totalStudents,
+        (SELECT COUNT(*) FROM ${STUDENT_TABLE}) AS totalStudents,
         (SELECT COUNT(*) FROM Room) AS totalRooms,
         (SELECT COUNT(*) FROM Room WHERE Current_Occupancy >= Capacity) AS occupiedRooms,
         (SELECT COUNT(*) FROM Room WHERE Current_Occupancy < Capacity) AS availableRooms,
@@ -1502,11 +2161,11 @@ protectedRouter.post(
       return;
     }
 
-    const studentId = await getNextId("Student", "Student_id");
+    const studentId = await getNextId(STUDENT_TABLE, "Student_id");
 
     await executeQuery(
       `
-        INSERT INTO Student (Student_id, Name, Room_id, Guardian_Contact)
+        INSERT INTO ${STUDENT_TABLE} (Student_id, Name, Room_id, Guardian_Contact)
         VALUES (@studentId, @name, @roomId, @guardianContact)
       `,
       (request) =>
@@ -1548,7 +2207,7 @@ protectedRouter.put(
     }
 
     const existingStudent = await queryOne(
-      "SELECT Student_id AS student_id, Room_id AS room_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id, Room_id AS room_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -1571,7 +2230,7 @@ protectedRouter.put(
 
     await executeQuery(
       `
-        UPDATE Student
+        UPDATE ${STUDENT_TABLE}
         SET Name = @name,
             Room_id = @roomId,
             Guardian_Contact = @guardianContact
@@ -1603,7 +2262,7 @@ protectedRouter.delete(
     }
 
     const existingStudent = await queryOne(
-      "SELECT Student_id AS student_id, Room_id AS room_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id, Room_id AS room_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -1617,7 +2276,7 @@ protectedRouter.delete(
         DELETE FROM Visitor WHERE Student_id = @studentId;
         DELETE FROM Payment WHERE Student_id = @studentId;
         DELETE FROM Leave_Request WHERE student_id = @studentId;
-        DELETE FROM Student WHERE Student_id = @studentId;
+        DELETE FROM ${STUDENT_TABLE} WHERE Student_id = @studentId;
       `,
       (request) => request.input("studentId", sql.Int, studentId)
     );
@@ -2002,7 +2661,7 @@ protectedRouter.post(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2077,7 +2736,7 @@ protectedRouter.put(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2176,7 +2835,7 @@ protectedRouter.post(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2251,7 +2910,7 @@ protectedRouter.put(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2778,7 +3437,7 @@ protectedRouter.post(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2865,7 +3524,7 @@ protectedRouter.put(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2941,6 +3600,7 @@ app.get(
     try {
       await getPool();
       await ensureUserColumns();
+      await ensureStudentsTable();
       await ensurePublicRoomShowcaseTable();
 
       res.json({
@@ -2966,8 +3626,31 @@ app.post("/api/auth/register", asyncHandler(registerUser));
 app.post("/api/auth/login", asyncHandler(loginUser));
 app.post("/api/auth/forgot-password", asyncHandler(forgotPassword));
 app.post("/api/auth/reset-password", asyncHandler(resetPassword));
-app.get("/api/auth/me", authenticateToken, asyncHandler(authMe));
-app.put("/api/auth/me", authenticateToken, asyncHandler(updateProfile));
+app.get("/api/auth/me", authenticateToken, authorizeRoles("Admin"), asyncHandler(authMe));
+app.put("/api/auth/me", authenticateToken, authorizeRoles("Admin"), asyncHandler(updateProfile));
+
+app.post("/api/student-auth/register", asyncHandler(registerStudent));
+app.post("/api/student-auth/login", asyncHandler(loginStudent));
+app.post("/api/student-auth/forgot-password", asyncHandler(forgotStudentPassword));
+app.post("/api/student-auth/reset-password", asyncHandler(resetStudentPassword));
+app.get(
+  "/api/student-auth/me",
+  authenticateToken,
+  authorizeRoles("Student"),
+  asyncHandler(studentAuthMe)
+);
+app.put(
+  "/api/student-auth/me",
+  authenticateToken,
+  authorizeRoles("Student"),
+  asyncHandler(updateStudentProfile)
+);
+app.get(
+  "/api/student/dashboard",
+  authenticateToken,
+  authorizeRoles("Student"),
+  asyncHandler(getStudentDashboard)
+);
 
 app.get(
   "/api/public/rooms",
@@ -3028,6 +3711,7 @@ app.get(
 app.post(
   "/api/public/rooms/:id/book",
   authenticateToken,
+  authorizeRoles("Admin"),
   asyncHandler(async (req, res) => {
     await ensurePublicRoomShowcaseTable();
 
@@ -3128,6 +3812,7 @@ app.listen(PORT, () => {
 
   getPool()
     .then(() => ensureUserColumns())
+    .then(() => ensureStudentsTable())
     .then(() => ensurePublicRoomShowcaseTable())
     .catch((error) => {
       console.error("DB Connection Failed:", error.message);

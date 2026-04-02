@@ -126,6 +126,12 @@ const Register = () => {
                   Sign In
                 </Link>
               </p>
+              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                Student account instead?{' '}
+                <Link to="/student/register" className="text-primary dark:text-blue-400 font-medium hover:underline">
+                  Use student registration
+                </Link>
+              </p>
             </div>
           </Card>
 

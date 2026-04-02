@@ -6,10 +6,16 @@ const columns = [
   { header: 'Student ID', key: 'student_id', sortable: true },
   { header: 'Name', key: 'name', sortable: true },
   {
+    header: 'Email',
+    key: 'email',
+    sortable: true,
+    render: (row) => row.email || '-'
+  },
+  {
     header: 'Room',
     key: 'room_id',
     sortable: true,
-    render: (row) => row.room_number ? `Room ${row.room_number}` : `Room ${row.room_id}`
+    render: (row) => row.room_number ? `Room ${row.room_number}` : row.room_id ? `Room ${row.room_id}` : 'Unassigned'
   },
   {
     header: 'Block',
@@ -21,7 +27,11 @@ const columns = [
   {
     header: 'Status',
     key: 'status',
-    render: (row) => <Badge variant="success">{row.status}</Badge>
+    render: (row) => (
+      <Badge variant={row.status === 'Active' ? 'success' : 'warning'}>
+        {row.status}
+      </Badge>
+    )
   }
 ]
 
@@ -98,7 +108,7 @@ const Students = () => (
     createLabel="Add Student"
     createTitle="Add Student"
     editTitle="Edit Student"
-    searchPlaceholder="Search students by ID, name, room, block, or guardian..."
+    searchPlaceholder="Search students by ID, name, email, room, block, or guardian..."
     emptyMessage="No students were found in the database."
     getDeleteMessage={(row) => `Delete ${row.name}? Related visitor, payment, and leave records for this student will also be removed.`}
   />

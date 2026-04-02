@@ -146,6 +146,12 @@ const Login = () => {
                   Create Account
                 </Link>
               </p>
+              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                Student?{' '}
+                <Link to="/student/login" className="font-medium text-primary dark:text-blue-400 hover:underline">
+                  Use student login
+                </Link>
+              </p>
             </div>
           </Card>
 

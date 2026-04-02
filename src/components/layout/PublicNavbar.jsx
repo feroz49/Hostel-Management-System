@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { Building2, Menu, Moon, Sun, X } from 'lucide-react'
-import { useAuth } from '../../auth/AuthContext'
+import { getDashboardPathForRole, useAuth } from '../../auth/AuthContext'
 import { useTheme } from '../../theme/ThemeContext'
 
 const navItems = [
@@ -20,9 +20,10 @@ const getNavClasses = ({ isActive }) => (
 )
 
 const PublicNavbar = () => {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
   const { darkMode, toggleDarkMode } = useTheme()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const dashboardPath = getDashboardPathForRole(user?.role)
 
   const closeMenu = () => {
     setIsMenuOpen(false)
@@ -61,13 +62,19 @@ const PublicNavbar = () => {
 
           {isAuthenticated ? (
             <Link
-              to="/admin"
+              to={dashboardPath}
               className="rounded-xl bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
             >
               Open Dashboard
             </Link>
           ) : (
             <>
+              <Link
+                to="/student/login"
+                className="rounded-xl border border-cyan-200 bg-cyan-50 px-5 py-2.5 text-sm font-medium text-cyan-700 transition hover:border-cyan-400/50 hover:text-cyan-800 dark:border-cyan-400/30 dark:bg-cyan-500/10 dark:text-cyan-200"
+              >
+                Student Portal
+              </Link>
               <Link
                 to="/login"
                 className="rounded-xl border border-slate-200 bg-white/70 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-cyan-400/50 hover:text-cyan-700 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:text-white"
@@ -117,7 +124,7 @@ const PublicNavbar = () => {
             <div className="mt-3 flex flex-col gap-2 border-t border-slate-200/80 pt-3 dark:border-white/10">
               {isAuthenticated ? (
                 <Link
-                  to="/admin"
+                  to={dashboardPath}
                   onClick={closeMenu}
                   className="rounded-xl bg-cyan-500 px-5 py-3 text-center text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                 >
@@ -125,6 +132,13 @@ const PublicNavbar = () => {
                 </Link>
               ) : (
                 <>
+                  <Link
+                    to="/student/login"
+                    onClick={closeMenu}
+                    className="rounded-xl border border-cyan-200 bg-cyan-50 px-5 py-3 text-center text-sm font-medium text-cyan-700 transition hover:border-cyan-400/50 hover:text-cyan-800 dark:border-cyan-400/30 dark:bg-cyan-500/10 dark:text-cyan-200"
+                  >
+                    Student Portal
+                  </Link>
                   <Link
                     to="/login"
                     onClick={closeMenu}
