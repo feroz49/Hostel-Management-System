@@ -3,9 +3,21 @@ import api, { STORAGE_KEYS, clearStoredSession } from '../services/api'
 
 const AuthContext = createContext(null)
 
-const persistSession = (token, user) => {
+const normalizeRole = (role) => {
+  if (role === 'Student') return 'Student'
+  if (role === 'SuperAdmin') return 'SuperAdmin'
+  return 'Admin'
+}
+
+export const getSessionTypeForRole = (role) => normalizeRole(role) === 'Student' ? 'student' : 'admin'
+export const getLoginPathForRole = (role) => normalizeRole(role) === 'Student' ? '/student/login' : '/login'
+export const getDashboardPathForRole = (role) => normalizeRole(role) === 'Student' ? '/student' : '/admin'
+export const getAuthBasePathForRole = (role) => normalizeRole(role) === 'Student' ? '/student-auth' : '/auth'
+
+const persistSession = (token, user, sessionType = getSessionTypeForRole(user?.role)) => {
   localStorage.setItem(STORAGE_KEYS.token, token)
   localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(user))
+  localStorage.setItem(STORAGE_KEYS.sessionType, sessionType)
 }
 
 export const AuthProvider = ({ children }) => {
@@ -15,23 +27,31 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const token = localStorage.getItem(STORAGE_KEYS.token)
     const storedUser = localStorage.getItem(STORAGE_KEYS.user)
+    const storedSessionType = localStorage.getItem(STORAGE_KEYS.sessionType)
 
     if (!token) {
       setLoading(false)
       return
     }
 
+    let initialRole = storedSessionType === 'student' ? 'Student' : 'Admin'
+
     if (storedUser) {
       try {
-        setUser(JSON.parse(storedUser))
+        const parsedUser = JSON.parse(storedUser)
+        initialRole = normalizeRole(parsedUser?.role || initialRole)
+        setUser(parsedUser)
       } catch (error) {
         clearStoredSession()
+        setLoading(false)
+        return
       }
     }
 
     let active = true
+    const mePath = `${getAuthBasePathForRole(initialRole)}/me`
 
-    api.get('/auth/me')
+    api.get(mePath)
       .then(({ data }) => {
         if (!active) return
         persistSession(token, data)
@@ -53,16 +73,18 @@ export const AuthProvider = ({ children }) => {
     }
   }, [])
 
-  const login = async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password })
-    persistSession(data.token, data.user)
+  const login = async (email, password, role = 'Admin') => {
+    const normalizedRole = normalizeRole(role)
+    const { data } = await api.post(`${getAuthBasePathForRole(normalizedRole)}/login`, { email, password })
+    persistSession(data.token, data.user, getSessionTypeForRole(normalizedRole))
     setUser(data.user)
     return data
   }
 
-  const register = async ({ email, password }) => {
-    const { data } = await api.post('/auth/register', { email, password })
-    persistSession(data.token, data.user)
+  const register = async (payload, role = 'Admin') => {
+    const normalizedRole = normalizeRole(role)
+    const { data } = await api.post(`${getAuthBasePathForRole(normalizedRole)}/register`, payload)
+    persistSession(data.token, data.user, getSessionTypeForRole(normalizedRole))
     setUser(data.user)
     return data
   }
@@ -72,13 +94,20 @@ export const AuthProvider = ({ children }) => {
     setUser(null)
   }
 
-  const updateProfile = async ({ name, phoneNumber }) => {
-    const { data } = await api.put('/auth/me', { name, phoneNumber })
+  const updateProfile = async ({ name, phoneNumber, guardianContact }) => {
+    const role = normalizeRole(user?.role)
+    const { data } = await api.put(`${getAuthBasePathForRole(role)}/me`, {
+      name,
+      phoneNumber,
+      guardianContact,
+    })
     const nextUser = {
       id: data.id,
       email: data.email,
       name: data.name,
       phoneNumber: data.phoneNumber,
+      guardianContact: data.guardianContact || null,
+      roomId: data.roomId || null,
       role: data.role,
       lastLogin: data.lastLogin,
     }
@@ -99,6 +128,8 @@ export const AuthProvider = ({ children }) => {
     register,
     updateProfile,
     logout,
+    dashboardPath: getDashboardPathForRole(user?.role),
+    loginPath: getLoginPathForRole(user?.role),
     isAuthenticated: Boolean(user)
   }), [user, loading])
 

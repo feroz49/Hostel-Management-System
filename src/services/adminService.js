@@ -1,4 +1,4 @@
-import api from './api'
+import api, { STORAGE_KEYS } from './api'
 
 const fetchResource = async (endpoint) => {
   const response = await api.get(endpoint)
@@ -22,6 +22,27 @@ const deleteResource = async (endpoint, id) => {
 
 export const dashboardService = {
   getSummary: () => fetchResource('/dashboard/summary'),
+}
+
+export const adminInviteService = {
+  create: async (payload) => {
+    const token = localStorage.getItem(STORAGE_KEYS.token)
+
+    const response = await api.post('/invite-admin', payload, {
+      headers: token
+        ? {
+            Authorization: `Bearer ${token}`,
+          }
+        : undefined,
+    })
+
+    return response.data
+  },
+}
+
+export const adminsService = {
+  getAll: () => fetchResource('/admins'),
+  remove: (id) => deleteResource('/admins', id),
 }
 
 export const studentsService = {

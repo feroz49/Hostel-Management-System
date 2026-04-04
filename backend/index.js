@@ -13,6 +13,7 @@ const app = express();
 const PORT = Number(process.env.PORT || 5000);
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-jwt-secret";
 const RESET_CODE_TTL_MINUTES = Number(process.env.RESET_CODE_TTL_MINUTES || 15);
+const FIXED_SUPER_ADMIN_EMAIL = "feroz.alam4103@gmail.com";
 const CLIENT_ORIGINS = [
   process.env.CLIENT_ORIGIN,
   "http://localhost:5173",
@@ -70,7 +71,10 @@ const missingDatabaseConfigMessage =
 
 let poolPromise = null;
 let userColumnsEnsured = false;
+let adminInvitationsEnsured = false;
+let studentsTableEnsured = false;
 let publicRoomShowcaseEnsured = false;
+const STUDENT_TABLE = "Students";
 
 const asyncHandler = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -126,9 +130,177 @@ const ensureUserColumns = async () => {
     BEGIN
       ALTER TABLE Users ADD passwordResetExpiresAt DATETIME NULL;
     END;
+
+    IF COL_LENGTH('Users', 'Role') IS NULL
+    BEGIN
+      ALTER TABLE Users ADD Role NVARCHAR(20) NOT NULL CONSTRAINT DF_Users_Role DEFAULT 'Admin';
+    END;
+
+    UPDATE Users
+    SET Role = 'Admin'
+    WHERE Role IS NULL;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM sys.check_constraints
+      WHERE name = 'CK_Users_Role'
+        AND parent_object_id = OBJECT_ID('dbo.Users')
+    )
+    BEGIN
+      ALTER TABLE Users
+      ADD CONSTRAINT CK_Users_Role CHECK (Role IN ('Admin', 'SuperAdmin'));
+    END;
   `);
 
   userColumnsEnsured = true;
+};
+
+const ensureAdminInvitationsTable = async () => {
+  if (adminInvitationsEnsured) {
+    return;
+  }
+
+  const pool = await getPool();
+
+  await pool.request().query(`
+    IF OBJECT_ID('dbo.AdminInvitations', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.AdminInvitations (
+        Id INT IDENTITY(1,1) NOT NULL,
+        Email NVARCHAR(100) NOT NULL,
+        Token NVARCHAR(128) NOT NULL,
+        CreatedAt DATETIME NOT NULL CONSTRAINT DF_AdminInvitations_CreatedAt DEFAULT GETDATE(),
+        IsUsed BIT NOT NULL CONSTRAINT DF_AdminInvitations_IsUsed DEFAULT 0,
+        CONSTRAINT PK_AdminInvitations PRIMARY KEY (Id),
+        CONSTRAINT UQ_AdminInvitations_Token UNIQUE (Token)
+      );
+    END;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM sys.indexes
+      WHERE object_id = OBJECT_ID('dbo.AdminInvitations')
+        AND name = 'IX_AdminInvitations_Email_IsUsed'
+    )
+    BEGIN
+      CREATE INDEX IX_AdminInvitations_Email_IsUsed
+      ON dbo.AdminInvitations (Email, IsUsed);
+    END;
+  `);
+
+  adminInvitationsEnsured = true;
+};
+
+const ensureStudentsTable = async () => {
+  if (studentsTableEnsured) {
+    return;
+  }
+
+  const pool = await getPool();
+
+  await pool.request().query(`
+    IF OBJECT_ID('dbo.Students', 'U') IS NULL AND OBJECT_ID('dbo.Student', 'U') IS NOT NULL
+    BEGIN
+      EXEC sp_rename 'dbo.Student', 'Students';
+    END;
+
+    IF OBJECT_ID('dbo.Students', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.Students (
+        Student_id INT NOT NULL,
+        Name NVARCHAR(100) NOT NULL,
+        Email NVARCHAR(100) NULL,
+        PhoneNumber NVARCHAR(30) NULL,
+        Room_id INT NULL,
+        Guardian_Contact NVARCHAR(20) NULL,
+        PasswordHash NVARCHAR(255) NULL,
+        JwtToken NVARCHAR(500) NULL,
+        PasswordResetCodeHash NVARCHAR(255) NULL,
+        PasswordResetExpiresAt DATETIME NULL,
+        CreatedAt DATETIME NOT NULL CONSTRAINT DF_Students_CreatedAt DEFAULT GETDATE(),
+        LastLogin DATETIME NULL,
+        CONSTRAINT PK_Students PRIMARY KEY (Student_id),
+        CONSTRAINT FK_Students_Room FOREIGN KEY (Room_id) REFERENCES dbo.Room(Room_id)
+      );
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'Email') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD Email NVARCHAR(100) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'PhoneNumber') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD PhoneNumber NVARCHAR(30) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'PasswordHash') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD PasswordHash NVARCHAR(255) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'JwtToken') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD JwtToken NVARCHAR(500) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'PasswordResetCodeHash') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD PasswordResetCodeHash NVARCHAR(255) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'PasswordResetExpiresAt') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD PasswordResetExpiresAt DATETIME NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'CreatedAt') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students
+      ADD CreatedAt DATETIME NOT NULL CONSTRAINT DF_Students_CreatedAt_Default DEFAULT GETDATE();
+    END;
+
+    IF COL_LENGTH('dbo.Students', 'LastLogin') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Students ADD LastLogin DATETIME NULL;
+    END;
+
+    IF EXISTS (
+      SELECT 1
+      FROM sys.columns
+      WHERE object_id = OBJECT_ID('dbo.Students')
+        AND name = 'Room_id'
+        AND is_nullable = 0
+    )
+    BEGIN
+      ALTER TABLE dbo.Students ALTER COLUMN Room_id INT NULL;
+    END;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM sys.indexes
+      WHERE object_id = OBJECT_ID('dbo.Students')
+        AND name = 'UQ_Students_Email'
+    )
+    BEGIN
+      CREATE UNIQUE INDEX UQ_Students_Email
+      ON dbo.Students (Email)
+      WHERE Email IS NOT NULL;
+    END;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM sys.indexes
+      WHERE object_id = OBJECT_ID('dbo.Students')
+        AND name IN ('IX_Students_Room_id', 'IX_Student_Room_id')
+    )
+    BEGIN
+      CREATE INDEX IX_Students_Room_id
+      ON dbo.Students (Room_id);
+    END;
+  `);
+
+  studentsTableEnsured = true;
 };
 
 const ensurePublicRoomShowcaseTable = async () => {
@@ -731,12 +903,16 @@ const studentSelectQuery = `
     s.Student_id AS id,
     s.Student_id AS student_id,
     s.Name AS name,
+    s.Email AS email,
     s.Room_id AS room_id,
     r.Room_Number AS room_number,
     hb.Block_Name AS block_name,
     s.Guardian_Contact AS guardian_contact,
-    'Active' AS status
-  FROM Student s
+    CASE
+      WHEN s.Room_id IS NULL THEN 'Pending Room Assignment'
+      ELSE 'Active'
+    END AS status
+  FROM ${STUDENT_TABLE} s
   LEFT JOIN Room r ON r.Room_id = s.Room_id
   LEFT JOIN Hostel_Block hb ON hb.Block_id = r.Hostel_Block
 `;
@@ -801,7 +977,7 @@ const visitorSelectQuery = `
     v.Date_time_Exit AS exit_time,
     v.Purpose AS purpose
   FROM Visitor v
-  LEFT JOIN Student s ON s.Student_id = v.Student_id
+  LEFT JOIN ${STUDENT_TABLE} s ON s.Student_id = v.Student_id
 `;
 
 const paymentSelectQuery = `
@@ -815,7 +991,7 @@ const paymentSelectQuery = `
     p.[Month] AS [month],
     'Paid' AS status
   FROM Payment p
-  LEFT JOIN Student s ON s.Student_id = p.Student_id
+  LEFT JOIN ${STUDENT_TABLE} s ON s.Student_id = p.Student_id
 `;
 
 const feeSelectQuery = `
@@ -863,7 +1039,7 @@ const leaveSelectQuery = `
     l.reason AS reason,
     l.Status AS status
   FROM Leave_Request l
-  LEFT JOIN Student s ON s.Student_id = l.student_id
+  LEFT JOIN ${STUDENT_TABLE} s ON s.Student_id = l.student_id
 `;
 
 const getStudentById = (studentId) =>
@@ -928,7 +1104,7 @@ const getRoomAvailability = (roomId, excludedStudentId = null) => {
         r.Capacity AS capacity,
         (
           SELECT COUNT(*)
-          FROM Student s
+          FROM ${STUDENT_TABLE} s
           WHERE s.Room_id = r.Room_id ${exclusionClause}
         ) AS current_occupancy
       FROM Room r
@@ -948,7 +1124,7 @@ const getRoomAvailability = (roomId, excludedStudentId = null) => {
 
 const getStudentCountForRoom = async (roomId) => {
   const row = await queryOne(
-    "SELECT COUNT(*) AS total FROM Student WHERE Room_id = @roomId",
+    `SELECT COUNT(*) AS total FROM ${STUDENT_TABLE} WHERE Room_id = @roomId`,
     (request) => request.input("roomId", sql.Int, roomId)
   );
 
@@ -964,7 +1140,7 @@ const syncRoomOccupancy = async (roomIds = []) => {
         UPDATE Room
         SET Current_Occupancy = (
           SELECT COUNT(*)
-          FROM Student
+          FROM ${STUDENT_TABLE}
           WHERE Room_id = @roomId
         )
         WHERE Room_id = @roomId
@@ -1013,6 +1189,16 @@ const getDisplayName = (email) =>
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 const getUserName = (user) => normalizeString(user.fullName) || getDisplayName(user.email);
+const getStudentName = (student) => normalizeString(student.Name || student.name);
+const getAdminRole = (user) => {
+  const normalizedEmail = normalizeString(user.email).toLowerCase();
+  if (normalizedEmail === FIXED_SUPER_ADMIN_EMAIL) {
+    return "SuperAdmin";
+  }
+
+  const role = normalizeString(user.Role ?? user.role);
+  return role === "SuperAdmin" ? "SuperAdmin" : "Admin";
+};
 
 const hashResetCode = (code) =>
   crypto.createHash("sha256").update(code).digest("hex");
@@ -1085,13 +1271,57 @@ const sendResetEmail = async ({ email, code, expiresAt }) => {
   };
 };
 
+const sendAdminInviteEmail = async ({ email, token }) => {
+  const transport = createMailTransport();
+  const registrationUrl = `http://localhost:5173/admin/register?token=${token}`;
+
+  if (!transport) {
+    return {
+      delivered: false,
+      previewOnly: true,
+      registrationUrl,
+    };
+  }
+
+  await transport.sendMail({
+    from: process.env.MAIL_FROM || process.env.SMTP_USER,
+    to: email,
+    subject: "You're invited to join HostelMS as an admin",
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">
+        <h2 style="margin-bottom: 12px; color: #1E3A5F;">Admin invitation</h2>
+        <p style="color: #334155; line-height: 1.6;">
+          A Super Admin invited you to create a HostelMS admin account.
+        </p>
+        <p style="margin: 24px 0;">
+          <a
+            href="${registrationUrl}"
+            style="display: inline-block; padding: 12px 20px; border-radius: 10px; background: #1D4ED8; color: #FFFFFF; text-decoration: none; font-weight: 700;"
+          >
+            Complete Admin Registration
+          </a>
+        </p>
+        <p style="color: #475569; line-height: 1.6; word-break: break-all;">
+          If the button does not work, use this link:<br />${registrationUrl}
+        </p>
+      </div>
+    `,
+  });
+
+  return {
+    delivered: true,
+    previewOnly: false,
+    registrationUrl,
+  };
+};
+
 const buildAuthPayload = (user) => {
   const normalizedUser = {
     id: user.id,
     email: user.email,
     name: getUserName(user),
     phoneNumber: user.phoneNumber || null,
-    role: "Admin",
+    role: getAdminRole(user),
   };
 
   const token = jwt.sign(
@@ -1101,6 +1331,34 @@ const buildAuthPayload = (user) => {
   );
 
   return { token, user: normalizedUser };
+};
+
+const buildStudentAuthPayload = (student) => {
+  const normalizedStudent = {
+    id: student.Student_id ?? student.student_id ?? student.id,
+    email: student.Email ?? student.email ?? null,
+    name: getStudentName(student),
+    phoneNumber: student.PhoneNumber ?? student.phoneNumber ?? null,
+    guardianContact:
+      student.Guardian_Contact ??
+      student.guardian_contact ??
+      student.guardianContact ??
+      null,
+    roomId: student.Room_id ?? student.room_id ?? null,
+    role: "Student",
+  };
+
+  const token = jwt.sign(
+    {
+      id: normalizedStudent.id,
+      email: normalizedStudent.email,
+      role: normalizedStudent.role,
+    },
+    JWT_SECRET,
+    { expiresIn: "2h" }
+  );
+
+  return { token, user: normalizedStudent };
 };
 
 const authenticateToken = (req, res, next) => {
@@ -1122,12 +1380,31 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+const authorizeRoles =
+  (...allowedRoles) =>
+  (req, res, next) => {
+    const userRole = req.user?.role;
+    const userEmail = normalizeString(req.user?.email).toLowerCase();
+    const hasAccess =
+      allowedRoles.includes(userRole) ||
+      (userRole === "SuperAdmin" && allowedRoles.includes("Admin")) ||
+      (userEmail === FIXED_SUPER_ADMIN_EMAIL && allowedRoles.includes("SuperAdmin"));
+
+    if (!hasAccess) {
+      res.status(403).json({ message: "You do not have access to this resource." });
+      return;
+    }
+
+    next();
+  };
+
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const validatePhoneNumber = (phoneNumber) => /^\+?[\d\s()-]{7,20}$/.test(phoneNumber);
 
 const registerUser = async (req, res) => {
   const email = String(req.body.email || "").trim().toLowerCase();
   const password = String(req.body.password || "");
+  const inviteToken = String(req.body.token || "").trim();
 
   if (!validateEmail(email)) {
     res.status(400).json({ message: "Please enter a valid email address." });
@@ -1140,6 +1417,7 @@ const registerUser = async (req, res) => {
   }
 
   await ensureUserColumns();
+  await ensureAdminInvitationsTable();
 
   const pool = await getPool();
   const existingUser = await queryOne(
@@ -1152,35 +1430,68 @@ const registerUser = async (req, res) => {
     return;
   }
 
+  if (!inviteToken) {
+    res.status(400).json({ message: "A valid admin invitation token is required." });
+    return;
+  }
+
+  const invitation = await queryOne(
+    `
+      SELECT TOP 1 Id, Email, Token, IsUsed
+      FROM AdminInvitations
+      WHERE Token = @token
+        AND Email = @email
+    `,
+    (request) =>
+      request
+        .input("token", sql.NVarChar(128), inviteToken)
+        .input("email", sql.NVarChar(100), email)
+  );
+
+  if (!invitation || invitation.IsUsed) {
+    res.status(400).json({ message: "This admin invitation is invalid or has already been used." });
+    return;
+  }
+
   const passwordHash = await bcrypt.hash(password, 10);
-  const fullName = getDisplayName(email);
+  const fullName = getDisplayName(email); 
   const insertResult = await pool
     .request()
     .input("email", sql.NVarChar, email)
     .input("passwordHash", sql.NVarChar, passwordHash)
     .input("fullName", sql.NVarChar(120), fullName)
+    .input("role", sql.NVarChar(20), "Admin")
     .query(`
-      INSERT INTO Users (email, passwordHash, fullName)
-      OUTPUT INSERTED.id, INSERTED.email, INSERTED.fullName, INSERTED.phoneNumber
-      VALUES (@email, @passwordHash, @fullName);
+      INSERT INTO Users (email, passwordHash, fullName, Role)
+      OUTPUT INSERTED.id, INSERTED.email, INSERTED.fullName, INSERTED.phoneNumber, INSERTED.Role AS role
+      VALUES (@email, @passwordHash, @fullName, @role);
     `);
 
   const createdUser = insertResult.recordset[0];
-  const { token, user } = buildAuthPayload(createdUser);
+  const { token: authToken, user } = buildAuthPayload(createdUser);
 
   await pool
     .request()
     .input("id", sql.Int, createdUser.id)
-    .input("token", sql.NVarChar(500), token)
+    .input("token", sql.NVarChar(500), authToken)
     .query(`
       UPDATE Users
       SET jwtToken = @token, lastLogin = GETDATE()
       WHERE id = @id;
     `);
 
+  await pool
+    .request()
+    .input("id", sql.Int, invitation.Id)
+    .query(`
+      UPDATE AdminInvitations
+      SET IsUsed = 1
+      WHERE Id = @id;
+    `);
+
   res.status(201).json({
     message: "Registration successful.",
-    token,
+    token: authToken,
     user,
   });
 };
@@ -1198,7 +1509,17 @@ const loginUser = async (req, res) => {
 
   const pool = await getPool();
   const userRecord = await queryOne(
-    "SELECT * FROM Users WHERE email = @email",
+    `
+      SELECT
+        id,
+        email,
+        fullName,
+        phoneNumber,
+        Role AS role,
+        passwordHash
+      FROM Users
+      WHERE email = @email
+    `,
     (request) => request.input("email", sql.NVarChar, email)
   );
 
@@ -1214,7 +1535,19 @@ const loginUser = async (req, res) => {
     return;
   }
 
-  const { token, user } = buildAuthPayload(userRecord);
+  const resolvedRole = getAdminRole(userRecord);
+  const user = {
+    id: userRecord.id,
+    email: userRecord.email,
+    name: getUserName(userRecord),
+    phoneNumber: userRecord.phoneNumber || null,
+    role: resolvedRole,
+  };
+  const token = jwt.sign(
+    { id: user.id, email: user.email, role: resolvedRole },
+    JWT_SECRET,
+    { expiresIn: "2h" }
+  );
 
   await pool
     .request()
@@ -1369,7 +1702,7 @@ const authMe = async (req, res) => {
 
   const currentUser = await queryOne(
     `
-      SELECT id, email, fullName, phoneNumber, lastLogin
+      SELECT id, email, fullName, phoneNumber, lastLogin, Role AS role
       FROM Users
       WHERE id = @id
     `,
@@ -1386,7 +1719,7 @@ const authMe = async (req, res) => {
     email: currentUser.email,
     name: getUserName(currentUser),
     phoneNumber: currentUser.phoneNumber || null,
-    role: "Admin",
+    role: getAdminRole(currentUser),
     lastLogin: currentUser.lastLogin,
   });
 };
@@ -1423,7 +1756,7 @@ const updateProfile = async (req, res) => {
 
   const updatedUser = await queryOne(
     `
-      SELECT id, email, fullName, phoneNumber, lastLogin
+      SELECT id, email, fullName, phoneNumber, lastLogin, Role AS role
       FROM Users
       WHERE id = @id
     `,
@@ -1435,21 +1768,567 @@ const updateProfile = async (req, res) => {
     email: updatedUser.email,
     name: getUserName(updatedUser),
     phoneNumber: updatedUser.phoneNumber || null,
-    role: "Admin",
+    role: getAdminRole(updatedUser),
     lastLogin: updatedUser.lastLogin,
     message: "Profile updated successfully.",
   });
 };
 
+const inviteAdmin = async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+
+  if (!validateEmail(email)) {
+    res.status(400).json({ message: "Please enter a valid email address." });
+    return;
+  }
+
+  await ensureUserColumns();
+  await ensureAdminInvitationsTable();
+
+  const existingUser = await queryOne(
+    "SELECT id FROM Users WHERE email = @email",
+    (request) => request.input("email", sql.NVarChar(100), email)
+  );
+
+  if (existingUser) {
+    res.status(409).json({ message: "An admin account with this email already exists." });
+    return;
+  }
+
+  const token = crypto.randomBytes(32).toString("hex");
+  const pool = await getPool();
+
+  await pool
+    .request()
+    .input("email", sql.NVarChar(100), email)
+    .input("token", sql.NVarChar(128), token)
+    .query(`
+      INSERT INTO AdminInvitations (Email, Token)
+      VALUES (@email, @token);
+    `);
+
+  const emailResult = await sendAdminInviteEmail({ email, token });
+
+  res.status(201).json({
+    message: emailResult.delivered
+      ? "Admin invitation sent successfully."
+      : "Invitation created. Configure SMTP to deliver emails automatically.",
+    email,
+    invitationSent: emailResult.delivered,
+    registrationUrl: emailResult.previewOnly ? emailResult.registrationUrl : undefined,
+  });
+};
+
+const getStudentAuthProfileById = (studentId) =>
+  queryOne(
+    `
+      SELECT
+        s.Student_id AS id,
+        s.Student_id AS student_id,
+        s.Name AS name,
+        s.Email AS email,
+        s.PhoneNumber AS phone_number,
+        s.Guardian_Contact AS guardian_contact,
+        s.Room_id AS room_id,
+        s.LastLogin AS last_login,
+        r.Room_Number AS room_number,
+        r.Type AS room_type,
+        r.Capacity AS room_capacity,
+        r.Current_Occupancy AS current_occupancy,
+        hb.Block_Name AS block_name
+      FROM ${STUDENT_TABLE} s
+      LEFT JOIN Room r ON r.Room_id = s.Room_id
+      LEFT JOIN Hostel_Block hb ON hb.Block_id = r.Hostel_Block
+      WHERE s.Student_id = @studentId
+    `,
+    (request) => request.input("studentId", sql.Int, studentId)
+  );
+
+const registerStudent = async (req, res) => {
+  const name = normalizeString(req.body.name);
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const phoneNumber = normalizeNullableString(req.body.phoneNumber);
+  const guardianContact = normalizeNullableString(
+    req.body.guardianContact ?? req.body.guardian_contact
+  );
+  const password = String(req.body.password || "");
+  const confirmPassword = String(req.body.confirmPassword || req.body.password_confirmation || "");
+  const rawRoomId = req.body.room_id ?? req.body.roomId;
+  const roomId =
+    rawRoomId === null || rawRoomId === undefined || rawRoomId === ""
+      ? null
+      : parsePositiveInt(rawRoomId);
+
+  if (!name) {
+    res.status(400).json({ message: "Student name is required." });
+    return;
+  }
+
+  if (!validateEmail(email)) {
+    res.status(400).json({ message: "Please enter a valid email address." });
+    return;
+  }
+
+  if (phoneNumber && !validatePhoneNumber(phoneNumber)) {
+    res.status(400).json({ message: "Please enter a valid phone number." });
+    return;
+  }
+
+  if (rawRoomId !== null && rawRoomId !== undefined && rawRoomId !== "" && !roomId) {
+    res.status(400).json({ message: "Please choose a valid room." });
+    return;
+  }
+
+  if (password.length < 6) {
+    res.status(400).json({ message: "Password must be at least 6 characters long." });
+    return;
+  }
+
+  if (confirmPassword && password !== confirmPassword) {
+    res.status(400).json({ message: "Passwords do not match." });
+    return;
+  }
+
+  await ensureStudentsTable();
+
+  const pool = await getPool();
+  const existingStudent = await queryOne(
+    `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Email = @email`,
+    (request) => request.input("email", sql.NVarChar(100), email)
+  );
+
+  if (existingStudent) {
+    res.status(409).json({ message: "An account with this email already exists." });
+    return;
+  }
+
+  if (roomId) {
+    const roomAvailability = await getRoomAvailability(roomId);
+
+    if (!roomAvailability) {
+      res.status(400).json({ message: "The selected room does not exist." });
+      return;
+    }
+
+    if (Number(roomAvailability.current_occupancy || 0) >= Number(roomAvailability.capacity || 0)) {
+      res.status(400).json({ message: "The selected room is already full." });
+      return;
+    }
+  }
+
+  const studentId = await getNextId(STUDENT_TABLE, "Student_id");
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  const insertResult = await pool
+    .request()
+    .input("studentId", sql.Int, studentId)
+    .input("name", sql.NVarChar(100), name)
+    .input("email", sql.NVarChar(100), email)
+    .input("phoneNumber", sql.NVarChar(30), phoneNumber)
+    .input("roomId", sql.Int, roomId)
+    .input("guardianContact", sql.NVarChar(20), guardianContact)
+    .input("passwordHash", sql.NVarChar(255), passwordHash)
+    .query(`
+      INSERT INTO ${STUDENT_TABLE} (
+        Student_id,
+        Name,
+        Email,
+        PhoneNumber,
+        Room_id,
+        Guardian_Contact,
+        PasswordHash
+      )
+      OUTPUT
+        INSERTED.Student_id,
+        INSERTED.Name,
+        INSERTED.Email,
+        INSERTED.PhoneNumber,
+        INSERTED.Room_id,
+        INSERTED.Guardian_Contact
+      VALUES (
+        @studentId,
+        @name,
+        @email,
+        @phoneNumber,
+        @roomId,
+        @guardianContact,
+        @passwordHash
+      );
+    `);
+
+  const createdStudent = insertResult.recordset[0];
+  const { token, user } = buildStudentAuthPayload(createdStudent);
+
+  await pool
+    .request()
+    .input("studentId", sql.Int, studentId)
+    .input("token", sql.NVarChar(500), token)
+    .query(`
+      UPDATE ${STUDENT_TABLE}
+      SET JwtToken = @token,
+          LastLogin = GETDATE()
+      WHERE Student_id = @studentId;
+    `);
+
+  if (roomId) {
+    await syncRoomOccupancy([roomId]);
+  }
+
+  res.status(201).json({
+    message: "Student registration successful.",
+    token,
+    user,
+  });
+};
+
+const loginStudent = async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const password = String(req.body.password || "");
+
+  if (!validateEmail(email) || !password) {
+    res.status(400).json({ message: "Email and password are required." });
+    return;
+  }
+
+  await ensureStudentsTable();
+
+  const pool = await getPool();
+  const studentRecord = await queryOne(
+    `SELECT * FROM ${STUDENT_TABLE} WHERE Email = @email`,
+    (request) => request.input("email", sql.NVarChar(100), email)
+  );
+
+  if (!studentRecord || !studentRecord.PasswordHash) {
+    res.status(404).json({ message: "Student account not found." });
+    return;
+  }
+
+  const passwordMatches = await bcrypt.compare(password, studentRecord.PasswordHash);
+
+  if (!passwordMatches) {
+    res.status(401).json({ message: "Invalid password." });
+    return;
+  }
+
+  const { token, user } = buildStudentAuthPayload(studentRecord);
+
+  await pool
+    .request()
+    .input("studentId", sql.Int, studentRecord.Student_id)
+    .input("token", sql.NVarChar(500), token)
+    .query(`
+      UPDATE ${STUDENT_TABLE}
+      SET JwtToken = @token,
+          LastLogin = GETDATE()
+      WHERE Student_id = @studentId;
+    `);
+
+  res.json({
+    message: "Student login successful.",
+    token,
+    user,
+  });
+};
+
+const forgotStudentPassword = async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+
+  if (!validateEmail(email)) {
+    res.status(400).json({ message: "Please enter a valid email address." });
+    return;
+  }
+
+  await ensureStudentsTable();
+
+  const pool = await getPool();
+  const studentRecord = await queryOne(
+    `SELECT Student_id AS student_id, Email AS email FROM ${STUDENT_TABLE} WHERE Email = @email`,
+    (request) => request.input("email", sql.NVarChar(100), email)
+  );
+
+  if (!studentRecord) {
+    res.status(404).json({ message: "No student account was found for this email address." });
+    return;
+  }
+
+  const resetCode = generateResetCode();
+  const resetCodeHash = hashResetCode(resetCode);
+  const expiresAt = new Date(Date.now() + RESET_CODE_TTL_MINUTES * 60 * 1000);
+
+  await pool
+    .request()
+    .input("studentId", sql.Int, studentRecord.student_id)
+    .input("passwordResetCodeHash", sql.NVarChar(255), resetCodeHash)
+    .input("passwordResetExpiresAt", sql.DateTime, expiresAt)
+    .query(`
+      UPDATE ${STUDENT_TABLE}
+      SET PasswordResetCodeHash = @passwordResetCodeHash,
+          PasswordResetExpiresAt = @passwordResetExpiresAt
+      WHERE Student_id = @studentId;
+    `);
+
+  const emailResult = await sendResetEmail({
+    email,
+    code: resetCode,
+    expiresAt,
+  });
+
+  res.json({
+    message: emailResult.delivered
+      ? "A reset code has been sent to the student's email."
+      : "Reset code generated. Configure SMTP to deliver emails automatically.",
+    email,
+    emailSent: emailResult.delivered,
+    previewResetCode: emailResult.previewOnly ? resetCode : undefined,
+    expiresAt: expiresAt.toISOString(),
+  });
+};
+
+const resetStudentPassword = async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const code = String(req.body.code || "").trim();
+  const password = String(req.body.password || "");
+  const confirmPassword = String(req.body.confirmPassword || req.body.password_confirmation || "");
+
+  if (!validateEmail(email)) {
+    res.status(400).json({ message: "Please enter a valid email address." });
+    return;
+  }
+
+  if (!code) {
+    res.status(400).json({ message: "Reset code is required." });
+    return;
+  }
+
+  if (password.length < 6) {
+    res.status(400).json({ message: "Password must be at least 6 characters long." });
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    res.status(400).json({ message: "Passwords do not match." });
+    return;
+  }
+
+  await ensureStudentsTable();
+
+  const pool = await getPool();
+  const studentRecord = await queryOne(
+    `
+      SELECT Student_id AS student_id, PasswordResetCodeHash, PasswordResetExpiresAt
+      FROM ${STUDENT_TABLE}
+      WHERE Email = @email
+    `,
+    (request) => request.input("email", sql.NVarChar(100), email)
+  );
+
+  if (!studentRecord || !studentRecord.PasswordResetCodeHash) {
+    res.status(400).json({ message: "No active password reset request was found for this email." });
+    return;
+  }
+
+  const isExpired =
+    !studentRecord.PasswordResetExpiresAt ||
+    new Date(studentRecord.PasswordResetExpiresAt).getTime() < Date.now();
+
+  if (isExpired) {
+    res.status(400).json({ message: "This reset code has expired. Please request a new one." });
+    return;
+  }
+
+  if (hashResetCode(code) !== studentRecord.PasswordResetCodeHash) {
+    res.status(400).json({ message: "The reset code is invalid." });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  await pool
+    .request()
+    .input("studentId", sql.Int, studentRecord.student_id)
+    .input("passwordHash", sql.NVarChar(255), passwordHash)
+    .query(`
+      UPDATE ${STUDENT_TABLE}
+      SET PasswordHash = @passwordHash,
+          JwtToken = NULL,
+          PasswordResetCodeHash = NULL,
+          PasswordResetExpiresAt = NULL
+      WHERE Student_id = @studentId;
+    `);
+
+  res.json({ message: "Student password reset successful. You can sign in now." });
+};
+
+const studentAuthMe = async (req, res) => {
+  await ensureStudentsTable();
+
+  const currentStudent = await getStudentAuthProfileById(req.user.id);
+
+  if (!currentStudent) {
+    res.status(404).json({ message: "Student account not found." });
+    return;
+  }
+
+  res.json({
+    id: currentStudent.student_id,
+    email: currentStudent.email,
+    name: currentStudent.name,
+    phoneNumber: currentStudent.phone_number || null,
+    guardianContact: currentStudent.guardian_contact || null,
+    roomId: currentStudent.room_id || null,
+    role: "Student",
+    lastLogin: currentStudent.last_login,
+  });
+};
+
+const updateStudentProfile = async (req, res) => {
+  await ensureStudentsTable();
+
+  const name = normalizeString(req.body.name);
+  const phoneNumber = normalizeNullableString(req.body.phoneNumber);
+  const guardianContact = normalizeNullableString(
+    req.body.guardianContact ?? req.body.guardian_contact
+  );
+
+  if (!name) {
+    res.status(400).json({ message: "Name is required." });
+    return;
+  }
+
+  if (phoneNumber && !validatePhoneNumber(phoneNumber)) {
+    res.status(400).json({ message: "Please enter a valid phone number." });
+    return;
+  }
+
+  await executeQuery(
+    `
+      UPDATE ${STUDENT_TABLE}
+      SET Name = @name,
+          PhoneNumber = @phoneNumber,
+          Guardian_Contact = @guardianContact
+      WHERE Student_id = @studentId
+    `,
+    (request) =>
+      request
+        .input("studentId", sql.Int, req.user.id)
+        .input("name", sql.NVarChar(100), name)
+        .input("phoneNumber", sql.NVarChar(30), phoneNumber)
+        .input("guardianContact", sql.NVarChar(20), guardianContact)
+  );
+
+  const updatedStudent = await getStudentAuthProfileById(req.user.id);
+
+  if (!updatedStudent) {
+    res.status(404).json({ message: "Student account not found." });
+    return;
+  }
+
+  res.json({
+    id: updatedStudent.student_id,
+    email: updatedStudent.email,
+    name: updatedStudent.name,
+    phoneNumber: updatedStudent.phone_number || null,
+    guardianContact: updatedStudent.guardian_contact || null,
+    roomId: updatedStudent.room_id || null,
+    role: "Student",
+    lastLogin: updatedStudent.last_login,
+    message: "Profile updated successfully.",
+  });
+};
+
+const getStudentDashboard = async (req, res) => {
+  await ensureStudentsTable();
+
+  const studentId = parsePositiveInt(req.user?.id);
+
+  if (!studentId) {
+    res.status(401).json({ message: "Student authentication is required." });
+    return;
+  }
+
+  const profile = await getStudentAuthProfileById(studentId);
+
+  if (!profile) {
+    res.status(404).json({ message: "Student account not found." });
+    return;
+  }
+
+  const [paymentSummary, leaveSummary, recentPayments, recentLeaves, roommateSummary] =
+    await Promise.all([
+      queryOne(
+        `
+          SELECT
+            COUNT(*) AS payment_records,
+            ISNULL(SUM(Amount), 0) AS total_paid
+          FROM Payment
+          WHERE Student_id = @studentId
+        `,
+        (request) => request.input("studentId", sql.Int, studentId)
+      ),
+      queryOne(
+        `
+          SELECT
+            COUNT(*) AS total_leaves,
+            SUM(CASE WHEN Status = 'Pending' THEN 1 ELSE 0 END) AS pending_leaves,
+            SUM(CASE WHEN Status = 'Approved' THEN 1 ELSE 0 END) AS approved_leaves
+          FROM Leave_Request
+          WHERE student_id = @studentId
+        `,
+        (request) => request.input("studentId", sql.Int, studentId)
+      ),
+      queryRows(
+        `${paymentSelectQuery} WHERE p.Student_id = @studentId ORDER BY p.Payment_Date DESC, p.Payment_id DESC`,
+        (request) => request.input("studentId", sql.Int, studentId)
+      ),
+      queryRows(
+        `${leaveSelectQuery} WHERE l.student_id = @studentId ORDER BY l.from_date DESC, l.leave_id DESC`,
+        (request) => request.input("studentId", sql.Int, studentId)
+      ),
+      profile.room_id
+        ? queryOne(
+            `
+              SELECT COUNT(*) AS roommates
+              FROM ${STUDENT_TABLE}
+              WHERE Room_id = @roomId
+            `,
+            (request) => request.input("roomId", sql.Int, profile.room_id)
+          )
+        : Promise.resolve({ roommates: 0 }),
+    ]);
+
+  res.json({
+    profile,
+    summary: {
+      paymentRecords: Number(paymentSummary?.payment_records || 0),
+      totalPaid: Number(paymentSummary?.total_paid || 0),
+      totalLeaves: Number(leaveSummary?.total_leaves || 0),
+      pendingLeaves: Number(leaveSummary?.pending_leaves || 0),
+      approvedLeaves: Number(leaveSummary?.approved_leaves || 0),
+      roommates: profile.room_id
+        ? Math.max(Number(roommateSummary?.roommates || 0) - 1, 0)
+        : 0,
+    },
+    recentPayments: recentPayments.slice(0, 5),
+    recentLeaveRequests: recentLeaves.slice(0, 5),
+  });
+};
+
 const protectedRouter = express.Router();
 protectedRouter.use(authenticateToken);
+protectedRouter.use(authorizeRoles("Admin"));
+protectedRouter.use(
+  asyncHandler(async (req, res, next) => {
+    await ensureStudentsTable();
+    next();
+  })
+);
 
 protectedRouter.get(
   "/dashboard/summary",
   asyncHandler(async (req, res) => {
     const summary = await queryOne(`
       SELECT
-        (SELECT COUNT(*) FROM Student) AS totalStudents,
+        (SELECT COUNT(*) FROM ${STUDENT_TABLE}) AS totalStudents,
         (SELECT COUNT(*) FROM Room) AS totalRooms,
         (SELECT COUNT(*) FROM Room WHERE Current_Occupancy >= Capacity) AS occupiedRooms,
         (SELECT COUNT(*) FROM Room WHERE Current_Occupancy < Capacity) AS availableRooms,
@@ -1461,6 +2340,89 @@ protectedRouter.get(
       ...summary,
       lastUpdatedAt: new Date().toISOString(),
     });
+  })
+);
+
+protectedRouter.post(
+  "/admin/invite",
+  authorizeRoles("SuperAdmin"),
+  asyncHandler(inviteAdmin)
+);
+
+protectedRouter.get(
+  "/admins",
+  authorizeRoles("SuperAdmin"),
+  asyncHandler(async (req, res) => {
+    await ensureUserColumns();
+
+    const rows = await queryRows(
+      `
+        SELECT
+          id,
+          email,
+          ISNULL(fullName, '') AS fullName,
+          ISNULL(phoneNumber, '') AS phoneNumber,
+          Role AS role,
+          createdAt,
+          lastLogin
+        FROM Users
+        WHERE Role = 'Admin'
+        ORDER BY createdAt DESC, id DESC
+      `
+    );
+
+    res.json(
+      rows.map((row) => ({
+        id: row.id,
+        email: row.email,
+        name: row.fullName || getDisplayName(row.email),
+        phoneNumber: row.phoneNumber || null,
+        role: row.role,
+        createdAt: row.createdAt,
+        lastLogin: row.lastLogin,
+      }))
+    );
+  })
+);
+
+protectedRouter.delete(
+  "/admins/:id",
+  authorizeRoles("SuperAdmin"),
+  asyncHandler(async (req, res) => {
+    await ensureUserColumns();
+
+    const adminId = parsePositiveInt(req.params.id);
+
+    if (!adminId) {
+      res.status(400).json({ message: "A valid admin ID is required." });
+      return;
+    }
+
+    const existingAdmin = await queryOne(
+      `
+        SELECT id, email, Role AS role
+        FROM Users
+        WHERE id = @id
+      `,
+      (request) => request.input("id", sql.Int, adminId)
+    );
+
+    if (!existingAdmin) {
+      res.status(404).json({ message: "Admin account not found." });
+      return;
+    }
+
+    if (getAdminRole(existingAdmin) !== "Admin") {
+      res.status(403).json({ message: "Only standard admin accounts can be removed here." });
+      return;
+    }
+
+    await executeQuery(
+      "DELETE FROM Users WHERE id = @id",
+      (request) => request.input("id", sql.Int, adminId)
+    );
+
+    res.json({ message: "Admin account removed successfully." });
   })
 );
 
@@ -1502,11 +2464,11 @@ protectedRouter.post(
       return;
     }
 
-    const studentId = await getNextId("Student", "Student_id");
+    const studentId = await getNextId(STUDENT_TABLE, "Student_id");
 
     await executeQuery(
       `
-        INSERT INTO Student (Student_id, Name, Room_id, Guardian_Contact)
+        INSERT INTO ${STUDENT_TABLE} (Student_id, Name, Room_id, Guardian_Contact)
         VALUES (@studentId, @name, @roomId, @guardianContact)
       `,
       (request) =>
@@ -1548,7 +2510,7 @@ protectedRouter.put(
     }
 
     const existingStudent = await queryOne(
-      "SELECT Student_id AS student_id, Room_id AS room_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id, Room_id AS room_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -1571,7 +2533,7 @@ protectedRouter.put(
 
     await executeQuery(
       `
-        UPDATE Student
+        UPDATE ${STUDENT_TABLE}
         SET Name = @name,
             Room_id = @roomId,
             Guardian_Contact = @guardianContact
@@ -1603,7 +2565,7 @@ protectedRouter.delete(
     }
 
     const existingStudent = await queryOne(
-      "SELECT Student_id AS student_id, Room_id AS room_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id, Room_id AS room_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -1617,7 +2579,7 @@ protectedRouter.delete(
         DELETE FROM Visitor WHERE Student_id = @studentId;
         DELETE FROM Payment WHERE Student_id = @studentId;
         DELETE FROM Leave_Request WHERE student_id = @studentId;
-        DELETE FROM Student WHERE Student_id = @studentId;
+        DELETE FROM ${STUDENT_TABLE} WHERE Student_id = @studentId;
       `,
       (request) => request.input("studentId", sql.Int, studentId)
     );
@@ -2002,7 +2964,7 @@ protectedRouter.post(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2077,7 +3039,7 @@ protectedRouter.put(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2176,7 +3138,7 @@ protectedRouter.post(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2251,7 +3213,7 @@ protectedRouter.put(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2778,7 +3740,7 @@ protectedRouter.post(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2865,7 +3827,7 @@ protectedRouter.put(
     }
 
     const student = await queryOne(
-      "SELECT Student_id AS student_id FROM Student WHERE Student_id = @studentId",
+      `SELECT Student_id AS student_id FROM ${STUDENT_TABLE} WHERE Student_id = @studentId`,
       (request) => request.input("studentId", sql.Int, studentId)
     );
 
@@ -2941,6 +3903,8 @@ app.get(
     try {
       await getPool();
       await ensureUserColumns();
+      await ensureAdminInvitationsTable();
+      await ensureStudentsTable();
       await ensurePublicRoomShowcaseTable();
 
       res.json({
@@ -2966,8 +3930,36 @@ app.post("/api/auth/register", asyncHandler(registerUser));
 app.post("/api/auth/login", asyncHandler(loginUser));
 app.post("/api/auth/forgot-password", asyncHandler(forgotPassword));
 app.post("/api/auth/reset-password", asyncHandler(resetPassword));
-app.get("/api/auth/me", authenticateToken, asyncHandler(authMe));
-app.put("/api/auth/me", authenticateToken, asyncHandler(updateProfile));
+app.get("/api/auth/me", authenticateToken, authorizeRoles("Admin"), asyncHandler(authMe));
+app.put("/api/auth/me", authenticateToken, authorizeRoles("Admin"), asyncHandler(updateProfile));
+app.post(
+  "/api/invite-admin",
+  authenticateToken,
+  authorizeRoles("SuperAdmin"),
+  asyncHandler(inviteAdmin)
+);
+app.post("/api/student-auth/register", asyncHandler(registerStudent));
+app.post("/api/student-auth/login", asyncHandler(loginStudent));
+app.post("/api/student-auth/forgot-password", asyncHandler(forgotStudentPassword));
+app.post("/api/student-auth/reset-password", asyncHandler(resetStudentPassword));
+app.get(
+  "/api/student-auth/me",
+  authenticateToken,
+  authorizeRoles("Student"),
+  asyncHandler(studentAuthMe)
+);
+app.put(
+  "/api/student-auth/me",
+  authenticateToken,
+  authorizeRoles("Student"),
+  asyncHandler(updateStudentProfile)
+);
+app.get(
+  "/api/student/dashboard",
+  authenticateToken,
+  authorizeRoles("Student"),
+  asyncHandler(getStudentDashboard)
+);
 
 app.get(
   "/api/public/rooms",
@@ -3028,6 +4020,7 @@ app.get(
 app.post(
   "/api/public/rooms/:id/book",
   authenticateToken,
+  authorizeRoles("Admin"),
   asyncHandler(async (req, res) => {
     await ensurePublicRoomShowcaseTable();
 
@@ -3128,6 +4121,7 @@ app.listen(PORT, () => {
 
   getPool()
     .then(() => ensureUserColumns())
+    .then(() => ensureStudentsTable())
     .then(() => ensurePublicRoomShowcaseTable())
     .catch((error) => {
       console.error("DB Connection Failed:", error.message);

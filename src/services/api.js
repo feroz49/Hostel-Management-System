@@ -2,12 +2,14 @@ import axios from 'axios'
 
 export const STORAGE_KEYS = {
   token: 'authToken',
-  user: 'authUser'
+  user: 'authUser',
+  sessionType: 'authSessionType',
 }
 
 export const clearStoredSession = () => {
   localStorage.removeItem(STORAGE_KEYS.token)
   localStorage.removeItem(STORAGE_KEYS.user)
+  localStorage.removeItem(STORAGE_KEYS.sessionType)
 }
 
 const getDefaultApiBaseUrl = () => {
@@ -44,11 +46,24 @@ const api = axios.create({
   },
 })
 
+const isPublicAuthRequest = (url = '') => {
+  return [
+    '/auth/login',
+    '/auth/register',
+    '/auth/forgot-password',
+    '/auth/reset-password',
+    '/student-auth/login',
+    '/student-auth/register',
+    '/student-auth/forgot-password',
+    '/student-auth/reset-password',
+  ].some((path) => url.endsWith(path))
+}
+
 // Request interceptor
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem(STORAGE_KEYS.token)
-    if (token) {
+    if (token && !isPublicAuthRequest(config.url)) {
       config.headers.Authorization = `Bearer ${token}`
     }
     return config
@@ -61,15 +76,18 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     const hasStoredSession = Boolean(localStorage.getItem(STORAGE_KEYS.token))
+    const sessionType = localStorage.getItem(STORAGE_KEYS.sessionType)
+    const loginPath = sessionType === 'student' ? '/student/login' : '/login'
     const shouldRedirect =
       (error.response?.status === 401 || error.response?.status === 403) &&
       hasStoredSession &&
       typeof window !== 'undefined' &&
-      !window.location.pathname.startsWith('/login')
+      !window.location.pathname.startsWith('/login') &&
+      !window.location.pathname.startsWith('/student/login')
 
     if (shouldRedirect) {
       clearStoredSession()
-      window.location.href = '/login'
+      window.location.href = loginPath
     }
 
     return Promise.reject(error)

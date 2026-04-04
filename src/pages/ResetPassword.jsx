@@ -218,6 +218,12 @@ const ResetPassword = () => {
                 <ArrowLeft className="w-4 h-4" />
                 Request a new code
               </Link>
+              <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+                Student account?{' '}
+                <Link to="/student/reset-password" className="font-medium text-primary dark:text-blue-400 hover:underline">
+                  Open student reset page
+                </Link>
+              </p>
             </div>
           </Card>
         </div>

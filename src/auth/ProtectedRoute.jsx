@@ -1,9 +1,9 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
-import { useAuth } from './AuthContext'
+import { getDashboardPathForRole, useAuth } from './AuthContext'
 import Loader from '../components/common/Loader'
 
-const ProtectedRoute = () => {
-  const { isAuthenticated, loading } = useAuth()
+const ProtectedRoute = ({ allowedRoles = [], loginPath = '/login' }) => {
+  const { isAuthenticated, loading, user } = useAuth()
   const location = useLocation()
 
   if (loading) {
@@ -15,7 +15,16 @@ const ProtectedRoute = () => {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />
+    return <Navigate to={loginPath} state={{ from: location }} replace />
+  }
+
+  const hasAllowedRole =
+    allowedRoles.length === 0 ||
+    allowedRoles.includes(user?.role) ||
+    (user?.role === 'SuperAdmin' && allowedRoles.includes('Admin'))
+
+  if (!hasAllowedRole) {
+    return <Navigate to={getDashboardPathForRole(user?.role)} replace />
   }
 
   return <Outlet />

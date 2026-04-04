@@ -11,11 +11,14 @@ import {
   Wrench
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { useAuth } from '../auth/AuthContext'
 import Card from '../components/common/Card'
 import Badge from '../components/common/Badge'
 import Button from '../components/common/Button'
+import Input from '../components/common/Input'
 import StatsChart from '../components/charts/StatsChart'
 import {
+  adminInviteService,
   dashboardService,
   maintenanceService,
   paymentsService,
@@ -40,10 +43,13 @@ const metricTone = [
 ]
 
 const Dashboard = () => {
+  const { user } = useAuth()
   const [summary, setSummary] = useState(null)
   const [payments, setPayments] = useState([])
   const [maintenance, setMaintenance] = useState([])
   const [loading, setLoading] = useState(true)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteLoading, setInviteLoading] = useState(false)
 
   const loadDashboard = async () => {
     setLoading(true)
@@ -73,6 +79,28 @@ const Dashboard = () => {
   useEffect(() => {
     loadDashboard()
   }, [])
+
+  const handleInviteSubmit = async (event) => {
+    event.preventDefault()
+
+    if (!inviteEmail.trim()) {
+      toast.error('Email is required.')
+      return
+    }
+
+    setInviteLoading(true)
+
+    try {
+      const response = await adminInviteService.create({ email: inviteEmail.trim() })
+      toast.success(response.message || 'Admin invitation sent.')
+      setInviteEmail('')
+    } catch (error) {
+      const message = error.response?.data?.message || 'Failed to send admin invitation.'
+      toast.error(message)
+    } finally {
+      setInviteLoading(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -245,6 +273,32 @@ const Dashboard = () => {
           </div>
         </Card>
       </div>
+
+      {user?.role === 'SuperAdmin' && (
+        <Card
+          title="Invite Admin"
+          subtitle="Create invite-only admin accounts without reopening public registration"
+        >
+          <form onSubmit={handleInviteSubmit} className="flex flex-col gap-4 md:flex-row md:items-end">
+            <div className="flex-1">
+              <Input
+                label="Admin Email"
+                name="inviteEmail"
+                type="email"
+                placeholder="newadmin@hostelms.com"
+                value={inviteEmail}
+                onChange={(event) => setInviteEmail(event.target.value)}
+              />
+            </div>
+            <Button type="submit" loading={inviteLoading} className="md:min-w-[180px]">
+              Send Invite
+            </Button>
+          </form>
+          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+            The invited admin will receive a registration link at `http://localhost:5173/admin/register?token=...`
+          </p>
+        </Card>
+      )}
     </div>
   )
 }

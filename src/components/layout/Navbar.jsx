@@ -1,7 +1,7 @@
 import { Menu, Sun, Moon, User, LogOut, Settings } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../../auth/AuthContext'
+import { getLoginPathForRole, useAuth } from '../../auth/AuthContext'
 import { useTheme } from '../../theme/ThemeContext'
 import toast from 'react-hot-toast'
 
@@ -11,17 +11,20 @@ const Navbar = ({ onMenuClick, title }) => {
   const { darkMode, toggleDarkMode } = useTheme()
   const navigate = useNavigate()
 
-  const displayName = user?.name || 'Administrator'
+  const isStudent = user?.role === 'Student'
+  const displayName = user?.name || (isStudent ? 'Student' : 'Administrator')
+  const profilePath = isStudent ? '/student/profile' : '/admin/profile'
+  const loginPath = getLoginPathForRole(user?.role)
 
   const handleLogout = () => {
     logout()
     toast.success('Logged out successfully')
-    navigate('/login', { replace: true })
+    navigate(loginPath, { replace: true })
   }
 
   const handleProfileSettings = () => {
     setShowUserMenu(false)
-    navigate('/admin/profile')
+    navigate(profilePath)
   }
 
   return (

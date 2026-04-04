@@ -1,6 +1,6 @@
 // src/pages/Register.jsx
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Mail, Lock, UserPlus } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { getApiErrorMessage } from '../services/api'
@@ -20,6 +20,9 @@ const Register = () => {
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
   const { register } = useAuth()
+  const [searchParams] = useSearchParams()
+  const inviteToken = searchParams.get('token')?.trim() || ''
+  const hasValidInviteToken = Boolean(inviteToken)
 
   const validateForm = () => {
     const newErrors = {}
@@ -48,7 +51,11 @@ const Register = () => {
 
     setLoading(true)
     try {
-      await register({ email: formData.email, password: formData.password })
+      await register({
+        email: formData.email,
+        password: formData.password,
+        token: inviteToken,
+      })
       toast.success('Registration successful! You are now logged in.')
       navigate('/admin', { replace: true })
     } catch (err) {
@@ -69,64 +76,86 @@ const Register = () => {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-primary dark:bg-blue-500 rounded-2xl mb-4 shadow-lg">
               <UserPlus className="w-8 h-8 text-white" />
             </div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Create Account</h1>
-            <p className="mt-2 text-gray-600 dark:text-gray-400">Register a new admin account for HostelMS</p>
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Admin Invitation</h1>
+            <p className="mt-2 text-gray-600 dark:text-gray-400">Complete your admin registration with a valid invite link</p>
           </div>
 
           <Card className="p-8 shadow-xl border-0">
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {errors.general && (
-                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                  <p className="text-sm text-red-600 dark:text-red-400">{errors.general}</p>
-                </div>
-              )}
+            {!hasValidInviteToken ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-800 dark:bg-red-900/20">
+                <h2 className="text-lg font-semibold text-red-700 dark:text-red-300">Invalid Invite Link</h2>
+                <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+                  This admin registration page requires a valid invite token. Please use the link sent by your Super Admin.
+                </p>
+                <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+                  Already have an account?{' '}
+                  <Link to="/login" className="text-primary dark:text-blue-400 font-medium hover:underline">
+                    Sign In
+                  </Link>
+                </p>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-5">
+                {errors.general && (
+                  <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                    <p className="text-sm text-red-600 dark:text-red-400">{errors.general}</p>
+                  </div>
+                )}
 
-              <Input
-                label="Email Address"
-                name="email"
-                type="email"
-                placeholder="Enter your email"
-                value={formData.email}
-                onChange={handleChange}
-                error={errors.email}
-                icon={<Mail className="w-5 h-5 text-gray-400" />}
-              />
+                <Input
+                  label="Email Address"
+                  name="email"
+                  type="email"
+                  placeholder="Enter your email"
+                  value={formData.email}
+                  onChange={handleChange}
+                  error={errors.email}
+                  icon={<Mail className="w-5 h-5 text-gray-400" />}
+                />
 
-              <Input
-                label="Password"
-                name="password"
-                type="password"
-                placeholder="Enter your password"
-                value={formData.password}
-                onChange={handleChange}
-                error={errors.password}
-                icon={<Lock className="w-5 h-5 text-gray-400" />}
-              />
+                <Input
+                  label="Password"
+                  name="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  value={formData.password}
+                  onChange={handleChange}
+                  error={errors.password}
+                  icon={<Lock className="w-5 h-5 text-gray-400" />}
+                />
 
-              <Input
-                label="Confirm Password"
-                name="confirmPassword"
-                type="password"
-                placeholder="Confirm your password"
-                value={formData.confirmPassword}
-                onChange={handleChange}
-                error={errors.confirmPassword}
-                icon={<Lock className="w-5 h-5 text-gray-400" />}
-              />
+                <Input
+                  label="Confirm Password"
+                  name="confirmPassword"
+                  type="password"
+                  placeholder="Confirm your password"
+                  value={formData.confirmPassword}
+                  onChange={handleChange}
+                  error={errors.confirmPassword}
+                  icon={<Lock className="w-5 h-5 text-gray-400" />}
+                />
 
-              <Button type="submit" className="w-full" size="lg" loading={loading}>
-                Register
-              </Button>
-            </form>
-
-            <div className="mt-6 text-center">
-              <p className="text-gray-600 dark:text-gray-400">
-                Already have an account?{' '}
-                <Link to="/login" className="text-primary dark:text-blue-400 font-medium hover:underline">
-                  Sign In
-                </Link>
-              </p>
-            </div>
+                <Button type="submit" className="w-full" size="lg" loading={loading}>
+                  Register
+                </Button>
+              </form>
+            )}
+            {hasValidInviteToken && (
+              <div className="mt-6 text-center">
+                <p className="text-gray-600 dark:text-gray-400">
+                  Already have an account?{' '}
+                  <Link to="/login" className="text-primary dark:text-blue-400 font-medium hover:underline">
+                    Sign In
+                  </Link>
+                </p>
+                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                  Student account instead?{' '}
+                  <Link to="/student/register" className="text-primary dark:text-blue-400 font-medium hover:underline">
+                    Use student registration
+                  </Link>
+                </p>
+              </div>
+            )}
           </Card>
 
           <div className="mt-6 text-center">

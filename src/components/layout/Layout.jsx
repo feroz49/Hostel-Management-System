@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
+import { useAuth } from '../../auth/AuthContext'
 import Sidebar from './Sidebar'
 import Navbar from './Navbar'
 import Footer from './Footer'
@@ -17,16 +18,20 @@ const pageTitles = {
   '/admin/maintenance': 'Maintenance Tracker',
   '/admin/leaves': 'Leave Requests',
   '/admin/profile': 'Profile Settings',
+  '/student': 'Student Dashboard',
+  '/student/profile': 'Profile Settings',
 }
 
 const Layout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
+  const { user } = useAuth()
+  const isStudent = user?.role === 'Student'
   const title = pageTitles[location.pathname] || 'Hostel Management System'
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-gray-50 dark:bg-slate-900">
-      <AnimatedBackdrop variant="admin" />
+      <AnimatedBackdrop variant={isStudent ? 'auth' : 'admin'} />
       <Sidebar isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
       
       <div className="relative z-10 flex min-h-screen flex-col lg:pl-64">
@@ -39,7 +44,7 @@ const Layout = () => {
           <Outlet />
         </main>
 
-        <Footer variant="admin" />
+        <Footer variant={isStudent ? 'student' : 'admin'} />
       </div>
     </div>
   )

@@ -1,0 +1,259 @@
+import { useEffect, useState } from 'react'
+import {
+  BadgeCheck,
+  BedDouble,
+  CalendarDays,
+  CreditCard,
+  ShieldCheck,
+  UserCircle2,
+} from 'lucide-react'
+import toast from 'react-hot-toast'
+import Badge from '../components/common/Badge'
+import Card from '../components/common/Card'
+import { formatCurrency, formatDate, formatDateTime } from '../utils/helpers'
+import studentPortalService from '../services/studentPortalService'
+
+const summaryTone = [
+  'bg-sky-500',
+  'bg-emerald-500',
+  'bg-amber-500',
+  'bg-violet-500',
+]
+
+const StudentDashboard = () => {
+  const [dashboard, setDashboard] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let active = true
+
+    const loadDashboard = async () => {
+      setLoading(true)
+
+      try {
+        const data = await studentPortalService.getDashboard()
+        if (active) {
+          setDashboard(data)
+        }
+      } catch (error) {
+        if (active) {
+          const message = error.response?.data?.message || 'Failed to load your student dashboard.'
+          toast.error(message)
+        }
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
+    }
+
+    loadDashboard()
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="space-y-6 animate-pulse">
+        <div className="h-40 rounded-3xl bg-gray-200 dark:bg-slate-700" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {[...Array(4)].map((_, index) => (
+            <div key={index} className="h-28 rounded-2xl bg-gray-200 dark:bg-slate-700" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div className="h-80 rounded-2xl bg-gray-200 dark:bg-slate-700" />
+          <div className="h-80 rounded-2xl bg-gray-200 dark:bg-slate-700" />
+        </div>
+      </div>
+    )
+  }
+
+  const profile = dashboard?.profile || {}
+  const summary = dashboard?.summary || {}
+  const recentPayments = dashboard?.recentPayments || []
+  const recentLeaveRequests = dashboard?.recentLeaveRequests || []
+  const hasAssignedRoom = Boolean(profile.room_id)
+
+  const summaryCards = [
+    { label: 'Payment Records', value: summary.paymentRecords || 0, note: 'Saved against your account', icon: CreditCard },
+    { label: 'Total Paid', value: formatCurrency(summary.totalPaid), note: 'Collected hostel payments', icon: BadgeCheck },
+    { label: 'Pending Leaves', value: summary.pendingLeaves || 0, note: 'Waiting for approval', icon: CalendarDays },
+    { label: 'Roommates', value: summary.roommates || 0, note: hasAssignedRoom ? 'Other students in your room' : 'No room assigned yet', icon: BedDouble },
+  ]
+
+  return (
+    <div className="space-y-6 animate-fadeIn">
+      <section className="rounded-[28px] bg-gradient-to-br from-slate-950 via-sky-700 to-cyan-500 p-6 text-white shadow-xl lg:p-8">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <p className="text-sm uppercase tracking-[0.2em] text-white/70">Student Workspace</p>
+            <h1 className="mt-3 text-3xl font-bold lg:text-4xl">
+              Welcome back, {profile.name || 'Student'}
+            </h1>
+            <p className="mt-3 max-w-xl text-sm text-white/80 lg:text-base">
+              Check your room assignment, payment history, and leave activity from one student portal.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <Badge className="border border-white/10 bg-white/15 text-white">
+              {hasAssignedRoom
+                ? `Room ${profile.room_number} • ${profile.block_name || 'Block pending'}`
+                : 'Room assignment pending'}
+            </Badge>
+            <Badge className="border border-white/10 bg-white/15 text-white">
+              Last login: {profile.last_login ? formatDateTime(profile.last_login) : 'Not available'}
+            </Badge>
+          </div>
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {summaryCards.map((card, index) => (
+          <Card key={card.label} className="border-0 shadow-md">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  {card.label}
+                </p>
+                <p className="mt-3 text-3xl font-bold text-gray-900 dark:text-white">{card.value}</p>
+                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{card.note}</p>
+              </div>
+              <span className={`inline-flex h-12 w-12 items-center justify-center rounded-2xl ${summaryTone[index]}`}>
+                <card.icon className="h-5 w-5 text-white" />
+              </span>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.05fr,0.95fr]">
+        <Card title="My Profile" subtitle="Student account information">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl bg-sky-50 p-4 dark:bg-sky-950/30">
+              <p className="text-xs uppercase tracking-wide text-sky-700 dark:text-sky-300">Email</p>
+              <p className="mt-2 text-sm font-semibold text-sky-950 dark:text-sky-100">
+                {profile.email || 'Not available'}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-emerald-50 p-4 dark:bg-emerald-950/30">
+              <p className="text-xs uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Phone</p>
+              <p className="mt-2 text-sm font-semibold text-emerald-950 dark:text-emerald-100">
+                {profile.phone_number || 'Not added yet'}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-amber-50 p-4 dark:bg-amber-950/30">
+              <p className="text-xs uppercase tracking-wide text-amber-700 dark:text-amber-300">Guardian Contact</p>
+              <p className="mt-2 text-sm font-semibold text-amber-950 dark:text-amber-100">
+                {profile.guardian_contact || 'Not added yet'}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-violet-50 p-4 dark:bg-violet-950/30">
+              <p className="text-xs uppercase tracking-wide text-violet-700 dark:text-violet-300">Room Status</p>
+              <p className="mt-2 text-sm font-semibold text-violet-950 dark:text-violet-100">
+                {hasAssignedRoom
+                  ? `Room ${profile.room_number} • ${profile.block_name || 'Block pending'}`
+                  : 'Pending room assignment'}
+              </p>
+            </div>
+          </div>
+        </Card>
+
+        <Card title="Room Allocation" subtitle="Your current accommodation details">
+          {hasAssignedRoom ? (
+            <div className="space-y-4">
+              <div className="rounded-2xl bg-gray-50 p-4 dark:bg-slate-700/50">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-500/15 text-cyan-600 dark:text-cyan-300">
+                    <BedDouble className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900 dark:text-white">Room {profile.room_number}</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      {profile.block_name || 'Block pending'} • {profile.room_type || 'Type pending'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-2xl bg-emerald-50 p-4 dark:bg-emerald-950/30">
+                  <p className="text-xs uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Capacity</p>
+                  <p className="mt-2 text-2xl font-bold text-emerald-950 dark:text-emerald-100">
+                    {profile.room_capacity || 0}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-amber-50 p-4 dark:bg-amber-950/30">
+                  <p className="text-xs uppercase tracking-wide text-amber-700 dark:text-amber-300">Current Occupancy</p>
+                  <p className="mt-2 text-2xl font-bold text-amber-950 dark:text-amber-100">
+                    {profile.current_occupancy || 0}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center dark:border-slate-700">
+              <UserCircle2 className="mx-auto h-10 w-10 text-gray-400" />
+              <p className="mt-4 font-semibold text-gray-900 dark:text-white">No room assigned yet</p>
+              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                Your student account is active, but an admin still needs to allocate a room.
+              </p>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card title="Recent Payments" subtitle="Latest payment history for your account">
+          <div className="space-y-3">
+            {recentPayments.length === 0 ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400">No payment records are available yet.</p>
+            ) : (
+              recentPayments.map((payment) => (
+                <div key={payment.payment_id} className="flex items-center justify-between rounded-2xl bg-gray-50 p-4 dark:bg-slate-700/50">
+                  <div>
+                    <p className="font-semibold text-gray-900 dark:text-white">{payment.month}</p>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      Paid on {formatDate(payment.payment_date)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-gray-900 dark:text-white">{formatCurrency(payment.amount)}</p>
+                    <Badge variant="success" className="mt-2">{payment.status}</Badge>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+
+        <Card title="Leave Requests" subtitle="Your latest leave activity">
+          <div className="space-y-3">
+            {recentLeaveRequests.length === 0 ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400">No leave requests have been recorded yet.</p>
+            ) : (
+              recentLeaveRequests.map((leave) => (
+                <div key={leave.leave_id} className="rounded-2xl bg-gray-50 p-4 dark:bg-slate-700/50">
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-gray-900 dark:text-white">
+                      {formatDate(leave.from_date)} to {formatDate(leave.to_date)}
+                    </p>
+                    <Badge variant={leave.status === 'Approved' ? 'success' : leave.status === 'Rejected' ? 'danger' : 'warning'}>
+                      {leave.status}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">{leave.reason}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+export default StudentDashboard

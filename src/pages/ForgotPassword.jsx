@@ -121,6 +121,12 @@ const ForgotPassword = () => {
                   Sign In
                 </Link>
               </p>
+              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                Student account?{' '}
+                <Link to="/student/forgot-password" className="font-medium text-primary dark:text-blue-400 hover:underline">
+                  Reset student password
+                </Link>
+              </p>
             </div>
           </Card>
 

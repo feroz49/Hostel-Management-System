@@ -10,11 +10,14 @@ import {
   Utensils,
   Wrench,
   CalendarDays,
+  ShieldCheck,
+  UserCog,
   X,
   Home
 } from 'lucide-react'
+import { useAuth } from '../../auth/AuthContext'
 
-const navItems = [
+const adminNavItems = [
   { path: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { path: '/admin/students', label: 'Students', icon: Users },
   { path: '/admin/rooms', label: 'Rooms', icon: DoorOpen },
@@ -27,7 +30,20 @@ const navItems = [
   { path: '/admin/leaves', label: 'Leave Requests', icon: CalendarDays },
 ]
 
+const studentNavItems = [
+  { path: '/student', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { path: '/student/profile', label: 'Profile', icon: UserCog },
+]
+
 const Sidebar = ({ isOpen, setIsOpen }) => {
+  const { user } = useAuth()
+  const isStudent = user?.role === 'Student'
+  const navItems = isStudent
+    ? studentNavItems
+    : user?.role === 'SuperAdmin'
+      ? [...adminNavItems, { path: '/admin/admins', label: 'Admins', icon: ShieldCheck }]
+      : adminNavItems
+
   return (
     <>
       {/* Mobile overlay */}
@@ -45,7 +61,12 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
             <div className="p-2 bg-white/10 rounded-lg">
               <Home className="w-6 h-6 text-white" />
             </div>
-            <span className="text-lg font-bold text-white">HostelMS</span>
+            <div>
+              <span className="text-lg font-bold text-white">HostelMS</span>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-white/60">
+                {isStudent ? 'Student Portal' : 'Admin Portal'}
+              </p>
+            </div>
           </div>
           <button 
             onClick={() => setIsOpen(false)}

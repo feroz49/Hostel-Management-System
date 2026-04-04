@@ -137,13 +137,13 @@ const Login = () => {
             </form>
 
             <div className="mt-6 text-center">
-              <p className="text-gray-600 dark:text-gray-400">
-                Don't have an account?{' '}
-                <Link
-                  to="/register"
-                  className="text-primary dark:text-blue-400 font-medium hover:underline"
-                >
-                  Create Account
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Admin accounts are created by Super Admin invitation only.
+              </p>
+              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                Student?{' '}
+                <Link to="/student/login" className="font-medium text-primary dark:text-blue-400 hover:underline">
+                  Use student login
                 </Link>
               </p>
             </div>

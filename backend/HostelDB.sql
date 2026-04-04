@@ -18,6 +18,7 @@ IF OBJECT_ID('dbo.Leave_Request', 'U') IS NOT NULL DROP TABLE dbo.Leave_Request;
 IF OBJECT_ID('dbo.Maintenance', 'U') IS NOT NULL DROP TABLE dbo.Maintenance;
 IF OBJECT_ID('dbo.Payment', 'U') IS NOT NULL DROP TABLE dbo.Payment;
 IF OBJECT_ID('dbo.Visitor', 'U') IS NOT NULL DROP TABLE dbo.Visitor;
+IF OBJECT_ID('dbo.Students', 'U') IS NOT NULL DROP TABLE dbo.Students;
 IF OBJECT_ID('dbo.Student', 'U') IS NOT NULL DROP TABLE dbo.Student;
 IF OBJECT_ID('dbo.Room_Booking_Request', 'U') IS NOT NULL DROP TABLE dbo.Room_Booking_Request;
 IF OBJECT_ID('dbo.Public_Room_Showcase', 'U') IS NOT NULL DROP TABLE dbo.Public_Room_Showcase;
@@ -25,6 +26,7 @@ IF OBJECT_ID('dbo.Room', 'U') IS NOT NULL DROP TABLE dbo.Room;
 IF OBJECT_ID('dbo.Hostel_Block', 'U') IS NOT NULL DROP TABLE dbo.Hostel_Block;
 IF OBJECT_ID('dbo.Fee_Structure', 'U') IS NOT NULL DROP TABLE dbo.Fee_Structure;
 IF OBJECT_ID('dbo.Mess_Menu', 'U') IS NOT NULL DROP TABLE dbo.Mess_Menu;
+IF OBJECT_ID('dbo.AdminInvitations', 'U') IS NOT NULL DROP TABLE dbo.AdminInvitations;
 IF OBJECT_ID('dbo.Users', 'U') IS NOT NULL DROP TABLE dbo.Users;
 GO
 
@@ -34,6 +36,7 @@ CREATE TABLE dbo.Users (
     email NVARCHAR(100) NOT NULL,
     fullName NVARCHAR(120) NULL,
     phoneNumber NVARCHAR(30) NULL,
+    Role NVARCHAR(20) NOT NULL CONSTRAINT DF_Users_Role DEFAULT 'Admin',
     passwordHash NVARCHAR(255) NOT NULL,
     jwtToken NVARCHAR(500) NULL,
     passwordResetCodeHash NVARCHAR(255) NULL,
@@ -41,7 +44,33 @@ CREATE TABLE dbo.Users (
     createdAt DATETIME NOT NULL CONSTRAINT DF_Users_createdAt DEFAULT GETDATE(),
     lastLogin DATETIME NULL,
     CONSTRAINT PK_Users PRIMARY KEY (id),
-    CONSTRAINT UQ_Users_email UNIQUE (email)
+    CONSTRAINT UQ_Users_email UNIQUE (email),
+    CONSTRAINT CK_Users_Role CHECK (Role IN ('Admin', 'SuperAdmin'))
+);
+GO
+
+-- ------------------ ADMIN INVITATIONS ------------------
+CREATE TABLE dbo.AdminInvitations (
+    Id INT IDENTITY(1,1) NOT NULL,
+    Email NVARCHAR(100) NOT NULL,
+    Token NVARCHAR(128) NOT NULL,
+    CreatedAt DATETIME NOT NULL CONSTRAINT DF_AdminInvitations_CreatedAt DEFAULT GETDATE(),
+    IsUsed BIT NOT NULL CONSTRAINT DF_AdminInvitations_IsUsed DEFAULT 0,
+    CONSTRAINT PK_AdminInvitations PRIMARY KEY (Id),
+    CONSTRAINT UQ_AdminInvitations_Token UNIQUE (Token)
+);
+GO
+
+CREATE INDEX IX_AdminInvitations_Email_IsUsed ON dbo.AdminInvitations (Email, IsUsed);
+GO
+
+-- ------------------ FIXED SUPER ADMIN ------------------
+INSERT INTO dbo.Users (email, fullName, Role, passwordHash)
+VALUES (
+    'feroz.alam4103@gmail.com',
+    'Super Admin',
+    'SuperAdmin',
+    '$2b$10$BMj2WlbGqsYJvOL7LqGlGe7FhR72qhjUQCcjXvVXfox0wbP.JX40i'
 );
 GO
 
@@ -105,15 +134,26 @@ CREATE TABLE dbo.Room (
 );
 GO
 
--- ------------------ STUDENT ------------------
-CREATE TABLE dbo.Student (
+-- ------------------ STUDENTS ------------------
+CREATE TABLE dbo.Students (
     Student_id INT NOT NULL,
     Name NVARCHAR(100) NOT NULL,
-    Room_id INT NOT NULL,
+    Email NVARCHAR(100) NULL,
+    PhoneNumber NVARCHAR(30) NULL,
+    Room_id INT NULL,
     Guardian_Contact NVARCHAR(20) NULL,
-    CONSTRAINT PK_Student PRIMARY KEY (Student_id),
-    CONSTRAINT FK_Student_Room FOREIGN KEY (Room_id) REFERENCES dbo.Room(Room_id)
+    PasswordHash NVARCHAR(255) NULL,
+    JwtToken NVARCHAR(500) NULL,
+    PasswordResetCodeHash NVARCHAR(255) NULL,
+    PasswordResetExpiresAt DATETIME NULL,
+    CreatedAt DATETIME NOT NULL CONSTRAINT DF_Students_CreatedAt DEFAULT GETDATE(),
+    LastLogin DATETIME NULL,
+    CONSTRAINT PK_Students PRIMARY KEY (Student_id),
+    CONSTRAINT FK_Students_Room FOREIGN KEY (Room_id) REFERENCES dbo.Room(Room_id)
 );
+GO
+
+CREATE UNIQUE INDEX UQ_Students_Email ON dbo.Students (Email) WHERE Email IS NOT NULL;
 GO
 
 -- ------------------ VISITOR ------------------
@@ -125,7 +165,7 @@ CREATE TABLE dbo.Visitor (
     Purpose NVARCHAR(255) NOT NULL,
     CONSTRAINT PK_Visitor PRIMARY KEY (Visitor_id),
     CONSTRAINT CK_Visitor_Time CHECK (Date_time_Exit IS NULL OR Date_time_Exit >= Date_time_Entry),
-    CONSTRAINT FK_Visitor_Student FOREIGN KEY (Student_id) REFERENCES dbo.Student(Student_id)
+    CONSTRAINT FK_Visitor_Student FOREIGN KEY (Student_id) REFERENCES dbo.Students(Student_id)
 );
 GO
 
@@ -138,7 +178,7 @@ CREATE TABLE dbo.Payment (
     [Month] NVARCHAR(20) NOT NULL,
     CONSTRAINT PK_Payment PRIMARY KEY (Payment_id),
     CONSTRAINT CK_Payment_Amount CHECK (Amount > 0),
-    CONSTRAINT FK_Payment_Student FOREIGN KEY (Student_id) REFERENCES dbo.Student(Student_id)
+    CONSTRAINT FK_Payment_Student FOREIGN KEY (Student_id) REFERENCES dbo.Students(Student_id)
 );
 GO
 
@@ -189,13 +229,13 @@ CREATE TABLE dbo.Leave_Request (
     CONSTRAINT PK_Leave_Request PRIMARY KEY (leave_id),
     CONSTRAINT CK_Leave_Request_Date_Range CHECK (to_date >= from_date),
     CONSTRAINT CK_Leave_Request_Status CHECK (Status IN ('Pending', 'Approved', 'Rejected')),
-    CONSTRAINT FK_Leave_Request_Student FOREIGN KEY (student_id) REFERENCES dbo.Student(Student_id)
+    CONSTRAINT FK_Leave_Request_Student FOREIGN KEY (student_id) REFERENCES dbo.Students(Student_id)
 );
 GO
 
 -- ------------------ SUPPORTING INDEXES ------------------
 CREATE INDEX IX_Room_Hostel_Block ON dbo.Room (Hostel_Block);
-CREATE INDEX IX_Student_Room_id ON dbo.Student (Room_id);
+CREATE INDEX IX_Students_Room_id ON dbo.Students (Room_id);
 CREATE INDEX IX_Visitor_Student_id ON dbo.Visitor (Student_id);
 CREATE INDEX IX_Payment_Student_id ON dbo.Payment (Student_id);
 CREATE INDEX IX_Maintenance_Room_id ON dbo.Maintenance (Room_id);

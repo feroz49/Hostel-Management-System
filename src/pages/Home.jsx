@@ -8,7 +8,7 @@ import {
   ShieldCheck,
   Users,
 } from 'lucide-react'
-import { useAuth } from '../auth/AuthContext'
+import { getDashboardPathForRole, useAuth } from '../auth/AuthContext'
 import AnimatedBackdrop from '../components/layout/AnimatedBackdrop'
 import PublicNavbar from '../components/layout/PublicNavbar'
 import Footer from '../components/layout/Footer'
@@ -197,7 +197,8 @@ const homePhotos = [
 ]
 
 const Home = () => {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
+  const dashboardPath = getDashboardPathForRole(user?.role)
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-slate-50 text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
@@ -227,7 +228,7 @@ const Home = () => {
               <div className="mt-10 flex flex-wrap gap-4">
                 {isAuthenticated ? (
                   <Link
-                    to="/admin"
+                    to={dashboardPath}
                     className="inline-flex items-center gap-2 rounded-2xl bg-cyan-500 px-6 py-3 text-base font-semibold text-slate-950 transition hover:bg-cyan-400"
                   >
                     Go To Dashboard
@@ -235,6 +236,12 @@ const Home = () => {
                   </Link>
                 ) : (
                   <>
+                    <Link
+                      to="/student/login"
+                      className="inline-flex items-center gap-2 rounded-2xl border border-cyan-300/70 bg-cyan-50 px-6 py-3 text-base font-semibold text-cyan-700 transition hover:border-cyan-400 hover:bg-cyan-100 dark:border-cyan-400/30 dark:bg-cyan-500/10 dark:text-cyan-200 dark:hover:bg-cyan-500/20"
+                    >
+                      Student Portal
+                    </Link>
                     <Link
                       to="/login"
                       className="inline-flex items-center gap-2 rounded-2xl bg-cyan-500 px-6 py-3 text-base font-semibold text-slate-950 transition hover:bg-cyan-400"
@@ -246,7 +253,7 @@ const Home = () => {
                       to="/register"
                       className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-6 py-3 text-base font-semibold text-slate-800 transition hover:border-cyan-400/50 hover:bg-white/70 dark:border-white/15 dark:text-white dark:hover:bg-white/5"
                     >
-                      Create Account
+                      Admin Register
                     </Link>
                   </>
                 )}
