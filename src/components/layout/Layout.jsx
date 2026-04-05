@@ -12,6 +12,7 @@ const pageTitles = {
   '/admin/rooms': 'Room Directory',
   '/admin/blocks': 'Hostel Blocks',
   '/admin/visitors': 'Visitor Log',
+  '/admin/bookings': 'Booking Transactions',
   '/admin/payments': 'Payment Ledger',
   '/admin/fees': 'Fee Structure',
   '/admin/mess': 'Mess Menu',
@@ -19,6 +20,7 @@ const pageTitles = {
   '/admin/leaves': 'Leave Requests',
   '/admin/profile': 'Profile Settings',
   '/student': 'Student Dashboard',
+  '/student/payment': 'Room Payment',
   '/student/profile': 'Profile Settings',
 }
 

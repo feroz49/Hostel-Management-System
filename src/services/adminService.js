@@ -80,6 +80,10 @@ export const paymentsService = {
   remove: (id) => deleteResource('/payments', id),
 }
 
+export const bookingsService = {
+  getAll: () => fetchResource('/bookings'),
+}
+
 export const feesService = {
   getAll: () => fetchResource('/fees'),
   create: (payload) => createResource('/fees', payload),

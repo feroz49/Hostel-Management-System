@@ -8,6 +8,7 @@ import Input from '../components/common/Input'
 import Button from '../components/common/Button'
 import Card from '../components/common/Card'
 import AnimatedBackdrop from '../components/layout/AnimatedBackdrop'
+import { saveBookingIntent } from '../utils/bookingIntent'
 
 const StudentLogin = () => {
   const [formData, setFormData] = useState({
@@ -20,14 +21,25 @@ const StudentLogin = () => {
   const navigate = useNavigate()
   const location = useLocation()
 
-  const from = location.state?.from?.pathname || '/student'
+  const fromState = location.state?.from
+  const from =
+    typeof fromState === 'string'
+      ? fromState
+      : `${fromState?.pathname || '/student'}${fromState?.search || ''}${fromState?.hash || ''}`
   const prefilledEmail = location.state?.email || ''
+  const bookingIntent = location.state?.bookingIntent || null
 
   useEffect(() => {
     if (prefilledEmail) {
       setFormData((current) => ({ ...current, email: prefilledEmail }))
     }
   }, [prefilledEmail])
+
+  useEffect(() => {
+    if (bookingIntent?.roomId) {
+      saveBookingIntent(bookingIntent)
+    }
+  }, [bookingIntent])
 
   const validateForm = () => {
     const nextErrors = {}

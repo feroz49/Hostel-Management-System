@@ -75,6 +75,7 @@ const StudentDashboard = () => {
   const summary = dashboard?.summary || {}
   const recentPayments = dashboard?.recentPayments || []
   const recentLeaveRequests = dashboard?.recentLeaveRequests || []
+  const roommateProfiles = dashboard?.roommateProfiles || []
   const hasAssignedRoom = Boolean(profile.room_id)
 
   const summaryCards = [
@@ -192,6 +193,25 @@ const StudentDashboard = () => {
                     {profile.current_occupancy || 0}
                   </p>
                 </div>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white/80 p-4 dark:border-slate-700 dark:bg-slate-900/40">
+                <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Roommates</p>
+                {roommateProfiles.length === 0 ? (
+                  <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                    {Number(profile.room_capacity || 0) <= 1
+                      ? 'Single room selected, so no roommates are assigned.'
+                      : 'Roommate allocation is pending.'}
+                  </p>
+                ) : (
+                  <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    {roommateProfiles.map((roommate) => (
+                      <div key={roommate.id} className="rounded-xl bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 dark:bg-slate-800 dark:text-gray-200">
+                        {roommate.name}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ) : (
