@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   BadgeCheck,
   BedDouble,
@@ -76,6 +77,7 @@ const StudentDashboard = () => {
   const recentPayments = dashboard?.recentPayments || []
   const recentLeaveRequests = dashboard?.recentLeaveRequests || []
   const roommateProfiles = dashboard?.roommateProfiles || []
+  const bookings = dashboard?.bookings || []
   const hasAssignedRoom = Boolean(profile.room_id)
 
   const summaryCards = [
@@ -99,15 +101,23 @@ const StudentDashboard = () => {
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <Badge className="border border-white/10 bg-white/15 text-white">
-              {hasAssignedRoom
-                ? `Room ${profile.room_number} • ${profile.block_name || 'Block pending'}`
-                : 'Room assignment pending'}
-            </Badge>
-            <Badge className="border border-white/10 bg-white/15 text-white">
-              Last login: {profile.last_login ? formatDateTime(profile.last_login) : 'Not available'}
-            </Badge>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-3">
+              <Badge className="border border-white/10 bg-white/15 text-white">
+                {hasAssignedRoom
+                  ? `Room ${profile.room_number} • ${profile.block_name || 'Block pending'}`
+                  : 'Room assignment pending'}
+              </Badge>
+              <Badge className="border border-white/10 bg-white/15 text-white">
+                Last login: {profile.last_login ? formatDateTime(profile.last_login) : 'Not available'}
+              </Badge>
+            </div>
+            <Link
+              to="/rooms"
+              className="inline-flex items-center justify-center rounded-2xl border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white hover:text-slate-900"
+            >
+              Book Another Room
+            </Link>
           </div>
         </div>
       </section>
@@ -225,6 +235,54 @@ const StudentDashboard = () => {
           )}
         </Card>
       </div>
+
+      <Card title="Recent Bookings" subtitle="Your room booking activity and allocations">
+        {bookings.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center dark:border-slate-700">
+            <p className="text-sm text-gray-500 dark:text-gray-400">No bookings found yet. Book a room from the rooms page and complete payment to see it here.</p>
+            <Link
+              to="/rooms"
+              className="mt-4 inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+            >
+              Browse Available Rooms
+            </Link>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {bookings.slice(0, 5).map((booking) => (
+              <div key={booking.booking_transaction_id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{booking.requested_room_name || 'Booked room'}</p>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      Allocated Room {booking.allocated_room_number || 'Pending'} • {booking.allocated_block_name || 'Block pending'}
+                    </p>
+                  </div>
+                  <Badge variant={booking.status === 'Completed' ? 'success' : booking.status === 'Pending' ? 'warning' : 'danger'}>
+                    {booking.status}
+                  </Badge>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-800">
+                    <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Amount</p>
+                    <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{formatCurrency(booking.amount)}</p>
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-800">
+                    <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Booked On</p>
+                    <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{formatDateTime(booking.booked_at)}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <Link
+              to="/rooms"
+              className="mt-4 inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+            >
+              Book Another Room
+            </Link>
+          </div>
+        )}
+      </Card>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card title="Recent Payments" subtitle="Latest payment history for your account">

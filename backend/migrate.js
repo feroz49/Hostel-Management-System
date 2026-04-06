@@ -7,10 +7,13 @@ const dbConfig = {
   user: process.env.DB_USER,
   password: process.env.DB_PASS,
   server: process.env.DB_SERVER,
+  ...(process.env.DB_PORT ? { port: Number(process.env.DB_PORT) } : {}),
   options: {
-    encrypt: true,
-    trustServerCertificate: true,
-    connectionTimeout: 30000,
+    ...(!process.env.DB_PORT && process.env.DB_INSTANCE
+      ? { instanceName: String(process.env.DB_INSTANCE).trim() }
+      : {}),
+    encrypt: process.env.DB_ENCRYPT === "true",
+    trustServerCertificate: process.env.DB_TRUST_CERTIFICATE !== "false",
   },
 };
 

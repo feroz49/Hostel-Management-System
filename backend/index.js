@@ -49,11 +49,9 @@ const dbConfig = {
   password: process.env.DB_PASS,
   server: process.env.DB_SERVER,
   database: process.env.DB_NAME,
-  ...(process.env.DB_INSTANCE
-    ? {}
-    : { port: Number(process.env.DB_PORT || 1433) }),
+  ...(process.env.DB_PORT ? { port: Number(process.env.DB_PORT) } : {}),
   options: {
-    ...(process.env.DB_INSTANCE
+    ...(!process.env.DB_PORT && process.env.DB_INSTANCE
       ? { instanceName: String(process.env.DB_INSTANCE).trim() }
       : {}),
     encrypt: process.env.DB_ENCRYPT === "true",
@@ -141,10 +139,15 @@ const ensureUserColumns = async () => {
     BEGIN
       ALTER TABLE Users ADD Role NVARCHAR(20) NOT NULL CONSTRAINT DF_Users_Role DEFAULT 'Admin';
     END;
+  `);
 
-    UPDATE Users
-    SET Role = 'Admin'
-    WHERE Role IS NULL;
+  await pool.request().query(`
+    IF COL_LENGTH('Users', 'Role') IS NOT NULL
+    BEGIN
+      UPDATE Users
+      SET Role = 'Admin'
+      WHERE Role IS NULL;
+    END;
 
     IF NOT EXISTS (
       SELECT 1
@@ -1222,6 +1225,12 @@ const getVisitorById = (visitorId) =>
 const getPaymentById = (paymentId) =>
   queryOne(`${paymentSelectQuery} WHERE p.Payment_id = @id`, (request) =>
     request.input("id", sql.Int, paymentId)
+  );
+
+const getStudentBookingsByStudentId = (studentId) =>
+  queryRows(
+    `${bookingSelectQuery} WHERE sb.Student_id = @studentId ORDER BY sb.Booked_At DESC, sb.Booking_Transaction_id DESC`,
+    (request) => request.input("studentId", sql.Int, studentId)
   );
 
 const getFeeById = (feeId) =>
@@ -2789,7 +2798,7 @@ const getStudentDashboard = async (req, res) => {
     return;
   }
 
-  const [paymentSummary, leaveSummary, recentPayments, recentLeaves, currentRoommateProfiles] =
+  const [paymentSummary, leaveSummary, recentPayments, recentLeaves, currentRoommateProfiles, studentBookings] =
     await Promise.all([
       queryOne(
         `
@@ -2821,6 +2830,7 @@ const getStudentDashboard = async (req, res) => {
         (request) => request.input("studentId", sql.Int, studentId)
       ),
       getRoommateProfilesByStudentId(studentId),
+      getStudentBookingsByStudentId(studentId),
     ]);
 
   const roommateProfiles =
@@ -2849,6 +2859,7 @@ const getStudentDashboard = async (req, res) => {
     recentPayments: recentPayments.slice(0, 5),
     recentLeaveRequests: recentLeaves.slice(0, 5),
     roommateProfiles,
+    bookings: studentBookings,
   });
 };
 
@@ -4623,15 +4634,6 @@ app.post(
 
     if (!student) {
       res.status(404).json({ message: "Student account not found." });
-      return;
-    }
-
-    if (student.room_id) {
-      const existingProfile = await getStudentAuthProfileById(studentId);
-      res.status(409).json({
-        message: "You already have an allocated room. Please contact admin to change it.",
-        profile: existingProfile,
-      });
       return;
     }
 
