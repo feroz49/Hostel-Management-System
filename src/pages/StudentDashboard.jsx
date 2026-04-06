@@ -3,8 +3,8 @@ import {
   BadgeCheck,
   BedDouble,
   CalendarDays,
+  ClipboardList,
   CreditCard,
-  ShieldCheck,
   UserCircle2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -19,6 +19,12 @@ const summaryTone = [
   'bg-amber-500',
   'bg-violet-500',
 ]
+
+const getBookingBadgeVariant = (status) => {
+  if (status === 'Approved') return 'success'
+  if (status === 'Rejected') return 'danger'
+  return 'warning'
+}
 
 const StudentDashboard = () => {
   const [dashboard, setDashboard] = useState(null)
@@ -75,13 +81,19 @@ const StudentDashboard = () => {
   const summary = dashboard?.summary || {}
   const recentPayments = dashboard?.recentPayments || []
   const recentLeaveRequests = dashboard?.recentLeaveRequests || []
+  const recentRoomBookings = dashboard?.recentRoomBookings || []
   const hasAssignedRoom = Boolean(profile.room_id)
 
   const summaryCards = [
     { label: 'Payment Records', value: summary.paymentRecords || 0, note: 'Saved against your account', icon: CreditCard },
     { label: 'Total Paid', value: formatCurrency(summary.totalPaid), note: 'Collected hostel payments', icon: BadgeCheck },
     { label: 'Pending Leaves', value: summary.pendingLeaves || 0, note: 'Waiting for approval', icon: CalendarDays },
-    { label: 'Roommates', value: summary.roommates || 0, note: hasAssignedRoom ? 'Other students in your room' : 'No room assigned yet', icon: BedDouble },
+    {
+      label: 'Booking Requests',
+      value: summary.bookingRequests || 0,
+      note: summary.pendingBookings ? `${summary.pendingBookings} pending admin review` : 'Track your room booking requests',
+      icon: ClipboardList,
+    },
   ]
 
   return (
@@ -106,6 +118,9 @@ const StudentDashboard = () => {
             </Badge>
             <Badge className="border border-white/10 bg-white/15 text-white">
               Last login: {profile.last_login ? formatDateTime(profile.last_login) : 'Not available'}
+            </Badge>
+            <Badge className="border border-white/10 bg-white/15 text-white">
+              Pending bookings: {summary.pendingBookings || 0}
             </Badge>
           </div>
         </div>
@@ -205,6 +220,34 @@ const StudentDashboard = () => {
           )}
         </Card>
       </div>
+
+      <Card title="Room Booking Requests" subtitle="Your latest room booking activity">
+        <div className="space-y-3">
+          {recentRoomBookings.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              You have not submitted any room booking requests yet.
+            </p>
+          ) : (
+            recentRoomBookings.map((booking) => (
+              <div key={booking.booking_id} className="rounded-2xl bg-gray-50 p-4 dark:bg-slate-700/50">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="font-semibold text-gray-900 dark:text-white">{booking.room_title}</p>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      {booking.room_category} room
+                      {booking.price_range ? ` • ${booking.price_range}` : ''}
+                    </p>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      Requested on {formatDateTime(booking.requested_at)}
+                    </p>
+                  </div>
+                  <Badge variant={getBookingBadgeVariant(booking.status)}>{booking.status}</Badge>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card title="Recent Payments" subtitle="Latest payment history for your account">

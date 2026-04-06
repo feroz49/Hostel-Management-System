@@ -24,6 +24,10 @@ export const dashboardService = {
   getSummary: () => fetchResource('/dashboard/summary'),
 }
 
+export const bookingRequestsService = {
+  getAll: (params) => fetchResource(params?.status ? `/booking-requests?status=${encodeURIComponent(params.status)}` : '/booking-requests'),
+}
+
 export const adminInviteService = {
   create: async (payload) => {
     const token = localStorage.getItem(STORAGE_KEYS.token)

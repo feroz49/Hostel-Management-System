@@ -22,7 +22,7 @@ const PublicRoomDetails = () => {
   const { roomId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
 
   const [room, setRoom] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -71,18 +71,30 @@ const PublicRoomDetails = () => {
     }
 
     if (!isAuthenticated) {
-      navigate('/login', { state: { from: location } })
+      navigate('/student/login', { state: { from: location } })
       return
     }
+
+    if (user?.role !== 'Student') {
+      toast.error('Only student accounts can book a room.')
+      return
+    }
+
+    let shouldOpenDashboard = false
 
     setBooking(true)
     try {
       const response = await publicRoomsService.bookRoom(room.id)
       toast.success(response.message || 'Booking request sent successfully.')
+      shouldOpenDashboard = true
     } catch (err) {
       toast.error(getApiErrorMessage(err, 'Failed to submit booking request.'))
     } finally {
       setBooking(false)
+    }
+
+    if (shouldOpenDashboard) {
+      navigate('/student')
     }
   }
 
@@ -187,7 +199,7 @@ const PublicRoomDetails = () => {
                     </Button>
                     {!isAuthenticated && isAvailable && (
                       <p className="mt-3 text-xs text-slate-400">
-                        You will be redirected to login if you try to book without signing in.
+                        You will be redirected to the student login page if you try to book without signing in.
                       </p>
                     )}
                   </div>

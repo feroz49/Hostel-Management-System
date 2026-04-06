@@ -308,6 +308,8 @@ const ensurePublicRoomShowcaseTable = async () => {
     return;
   }
 
+  await ensureStudentsTable();
+
   const pool = await getPool();
 
   await pool.request().query(`
@@ -353,6 +355,45 @@ const ensurePublicRoomShowcaseTable = async () => {
 
       CREATE INDEX IX_Room_Booking_Request_User_Status
       ON dbo.Room_Booking_Request (User_id, Status);
+    END;
+
+    IF OBJECT_ID('dbo.Student_Room_Booking_Request', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.Student_Room_Booking_Request (
+        Booking_id INT IDENTITY(1,1) NOT NULL,
+        Showcase_Room_id INT NOT NULL,
+        Student_id INT NOT NULL,
+        Requested_At DATETIME NOT NULL CONSTRAINT DF_Student_Room_Booking_Request_Requested_At DEFAULT GETDATE(),
+        Status NVARCHAR(20) NOT NULL CONSTRAINT DF_Student_Room_Booking_Request_Status DEFAULT 'Pending',
+        CONSTRAINT PK_Student_Room_Booking_Request PRIMARY KEY (Booking_id),
+        CONSTRAINT FK_Student_Room_Booking_Request_Showcase FOREIGN KEY (Showcase_Room_id)
+          REFERENCES dbo.Public_Room_Showcase(Showcase_Room_id),
+        CONSTRAINT FK_Student_Room_Booking_Request_Student FOREIGN KEY (Student_id)
+          REFERENCES dbo.Students(Student_id),
+        CONSTRAINT CK_Student_Room_Booking_Request_Status CHECK (Status IN ('Pending', 'Approved', 'Rejected'))
+      );
+    END;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM sys.indexes
+      WHERE object_id = OBJECT_ID('dbo.Student_Room_Booking_Request')
+        AND name = 'IX_Student_Room_Booking_Request_Student_Status'
+    )
+    BEGIN
+      CREATE INDEX IX_Student_Room_Booking_Request_Student_Status
+      ON dbo.Student_Room_Booking_Request (Student_id, Status);
+    END;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM sys.indexes
+      WHERE object_id = OBJECT_ID('dbo.Student_Room_Booking_Request')
+        AND name = 'IX_Student_Room_Booking_Request_Status_Requested_At'
+    )
+    BEGIN
+      CREATE INDEX IX_Student_Room_Booking_Request_Status_Requested_At
+      ON dbo.Student_Room_Booking_Request (Status, Requested_At);
     END;
   `);
 
@@ -956,6 +997,24 @@ const publicRoomShowcaseSelectQuery = `
     END AS availability_status,
     prs.Sort_Order AS sort_order
   FROM Public_Room_Showcase prs
+`;
+
+const studentRoomBookingSelectQuery = `
+  SELECT
+    srb.Booking_id AS id,
+    srb.Booking_id AS booking_id,
+    srb.Showcase_Room_id AS room_id,
+    prs.Room_Name AS room_title,
+    prs.Category AS room_category,
+    CONCAT('$', prs.Price_Min, ' - $', prs.Price_Max, ' ', prs.Price_Unit) AS price_range,
+    srb.Requested_At AS requested_at,
+    srb.Status AS status,
+    s.Student_id AS student_id,
+    s.Name AS student_name,
+    s.Email AS student_email
+  FROM Student_Room_Booking_Request srb
+  INNER JOIN Public_Room_Showcase prs ON prs.Showcase_Room_id = srb.Showcase_Room_id
+  INNER JOIN ${STUDENT_TABLE} s ON s.Student_id = srb.Student_id
 `;
 
 const blockSelectQuery = `
@@ -2238,6 +2297,7 @@ const updateStudentProfile = async (req, res) => {
 
 const getStudentDashboard = async (req, res) => {
   await ensureStudentsTable();
+  await ensurePublicRoomShowcaseTable();
 
   const studentId = parsePositiveInt(req.user?.id);
 
@@ -2253,7 +2313,15 @@ const getStudentDashboard = async (req, res) => {
     return;
   }
 
-  const [paymentSummary, leaveSummary, recentPayments, recentLeaves, roommateSummary] =
+  const [
+    paymentSummary,
+    leaveSummary,
+    recentPayments,
+    recentLeaves,
+    roommateSummary,
+    bookingSummary,
+    recentBookings,
+  ] =
     await Promise.all([
       queryOne(
         `
@@ -2294,6 +2362,24 @@ const getStudentDashboard = async (req, res) => {
             (request) => request.input("roomId", sql.Int, profile.room_id)
           )
         : Promise.resolve({ roommates: 0 }),
+      queryOne(
+        `
+          SELECT
+            COUNT(*) AS total_booking_requests,
+            SUM(CASE WHEN Status = 'Pending' THEN 1 ELSE 0 END) AS pending_bookings
+          FROM Student_Room_Booking_Request
+          WHERE Student_id = @studentId
+        `,
+        (request) => request.input("studentId", sql.Int, studentId)
+      ),
+      queryRows(
+        `
+          ${studentRoomBookingSelectQuery}
+          WHERE srb.Student_id = @studentId
+          ORDER BY srb.Requested_At DESC, srb.Booking_id DESC
+        `,
+        (request) => request.input("studentId", sql.Int, studentId)
+      ),
     ]);
 
   res.json({
@@ -2304,12 +2390,15 @@ const getStudentDashboard = async (req, res) => {
       totalLeaves: Number(leaveSummary?.total_leaves || 0),
       pendingLeaves: Number(leaveSummary?.pending_leaves || 0),
       approvedLeaves: Number(leaveSummary?.approved_leaves || 0),
+      bookingRequests: Number(bookingSummary?.total_booking_requests || 0),
+      pendingBookings: Number(bookingSummary?.pending_bookings || 0),
       roommates: profile.room_id
         ? Math.max(Number(roommateSummary?.roommates || 0) - 1, 0)
         : 0,
     },
     recentPayments: recentPayments.slice(0, 5),
     recentLeaveRequests: recentLeaves.slice(0, 5),
+    recentRoomBookings: recentBookings.slice(0, 5),
   });
 };
 
@@ -2319,6 +2408,7 @@ protectedRouter.use(authorizeRoles("Admin"));
 protectedRouter.use(
   asyncHandler(async (req, res, next) => {
     await ensureStudentsTable();
+    await ensurePublicRoomShowcaseTable();
     next();
   })
 );
@@ -2333,6 +2423,7 @@ protectedRouter.get(
         (SELECT COUNT(*) FROM Room WHERE Current_Occupancy >= Capacity) AS occupiedRooms,
         (SELECT COUNT(*) FROM Room WHERE Current_Occupancy < Capacity) AS availableRooms,
         (SELECT COUNT(*) FROM Maintenance WHERE Status = 'Pending') AS pendingMaintenance,
+        (SELECT COUNT(*) FROM Student_Room_Booking_Request WHERE Status = 'Pending') AS pendingBookingRequests,
         (SELECT ISNULL(SUM(Amount), 0) FROM Payment) AS totalCollection
     `);
 
@@ -2340,6 +2431,39 @@ protectedRouter.get(
       ...summary,
       lastUpdatedAt: new Date().toISOString(),
     });
+  })
+);
+
+protectedRouter.get(
+  "/booking-requests",
+  asyncHandler(async (req, res) => {
+    const requestedStatus = normalizeString(req.query.status);
+    const normalizedStatus = requestedStatus
+      ? BOOKING_REQUEST_STATUSES.find(
+          (status) => status.toLowerCase() === requestedStatus.toLowerCase()
+        )
+      : null;
+
+    if (requestedStatus && !normalizedStatus) {
+      res.status(400).json({
+        message: `Invalid status. Allowed values: ${BOOKING_REQUEST_STATUSES.join(", ")}.`,
+      });
+      return;
+    }
+
+    const whereClause = normalizedStatus ? "WHERE srb.Status = @status" : "";
+    const rows = await queryRows(
+      `
+        ${studentRoomBookingSelectQuery}
+        ${whereClause}
+        ORDER BY srb.Requested_At DESC, srb.Booking_id DESC
+      `,
+      normalizedStatus
+        ? (request) => request.input("status", sql.NVarChar(20), normalizedStatus)
+        : undefined
+    );
+
+    res.json(rows);
   })
 );
 
@@ -4020,8 +4144,9 @@ app.get(
 app.post(
   "/api/public/rooms/:id/book",
   authenticateToken,
-  authorizeRoles("Admin"),
+  authorizeRoles("Student"),
   asyncHandler(async (req, res) => {
+    await ensureStudentsTable();
     await ensurePublicRoomShowcaseTable();
 
     const roomId = parsePositiveInt(req.params.id);
@@ -4043,25 +4168,32 @@ app.post(
       return;
     }
 
-    const userId = parsePositiveInt(req.user?.id);
+    const studentId = parsePositiveInt(req.user?.id);
 
-    if (!userId) {
+    if (!studentId) {
       res.status(401).json({ message: "You need to sign in before booking a room." });
+      return;
+    }
+
+    const student = await getStudentAuthProfileById(studentId);
+
+    if (!student) {
+      res.status(404).json({ message: "Student account not found." });
       return;
     }
 
     const pendingBooking = await queryOne(
       `
         SELECT TOP 1 Booking_id AS booking_id
-        FROM Room_Booking_Request
+        FROM Student_Room_Booking_Request
         WHERE Showcase_Room_id = @roomId
-          AND User_id = @userId
+          AND Student_id = @studentId
           AND Status = 'Pending'
       `,
       (request) =>
         request
           .input("roomId", sql.Int, roomId)
-          .input("userId", sql.Int, userId)
+          .input("studentId", sql.Int, studentId)
     );
 
     if (pendingBooking) {
@@ -4071,14 +4203,14 @@ app.post(
 
     const insertResult = await executeQuery(
       `
-        INSERT INTO Room_Booking_Request (Showcase_Room_id, User_id, Status)
+        INSERT INTO Student_Room_Booking_Request (Showcase_Room_id, Student_id, Status)
         OUTPUT INSERTED.Booking_id AS booking_id, INSERTED.Status AS status, INSERTED.Requested_At AS requested_at
-        VALUES (@roomId, @userId, @status)
+        VALUES (@roomId, @studentId, @status)
       `,
       (request) =>
         request
           .input("roomId", sql.Int, roomId)
-          .input("userId", sql.Int, userId)
+          .input("studentId", sql.Int, studentId)
           .input("status", sql.NVarChar(20), BOOKING_REQUEST_STATUSES[0])
     );
 
@@ -4091,6 +4223,10 @@ app.post(
         id: room.id,
         title: room.title,
         category: room.category,
+      },
+      student: {
+        id: student.student_id,
+        name: student.name,
       },
     });
   })
