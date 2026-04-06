@@ -20,11 +20,12 @@ import Input from '../components/common/Input'
 import StatsChart from '../components/charts/StatsChart'
 import {
   adminInviteService,
+  bookingRequestsService,
   dashboardService,
   maintenanceService,
   paymentsService,
 } from '../services/adminService'
-import { formatCurrency, formatDate } from '../utils/helpers'
+import { formatCurrency, formatDate, formatDateTime } from '../utils/helpers'
 
 const quickLinks = [
   { to: '/admin/students', label: 'Students', description: 'Review student allocations', icon: Users, tone: 'bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300' },
@@ -44,11 +45,18 @@ const metricTone = [
   'bg-orange-500',
 ]
 
+const getBookingBadgeVariant = (status) => {
+  if (status === 'Approved') return 'success'
+  if (status === 'Rejected') return 'danger'
+  return 'warning'
+}
+
 const Dashboard = () => {
   const { user } = useAuth()
   const [summary, setSummary] = useState(null)
   const [payments, setPayments] = useState([])
   const [maintenance, setMaintenance] = useState([])
+  const [bookingRequests, setBookingRequests] = useState([])
   const [loading, setLoading] = useState(true)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteLoading, setInviteLoading] = useState(false)
@@ -57,14 +65,16 @@ const Dashboard = () => {
     setLoading(true)
 
     try {
-      const [summaryData, paymentsData, maintenanceData] = await Promise.all([
+      const [summaryData, paymentsData, maintenanceData, bookingRequestsData] = await Promise.all([
         dashboardService.getSummary(),
         paymentsService.getAll(),
         maintenanceService.getAll(),
+        bookingRequestsService.getAll({ status: 'Pending' }),
       ])
 
       setSummary(summaryData)
       setPayments(paymentsData.slice(0, 5))
+      setBookingRequests(bookingRequestsData.slice(0, 4))
       setMaintenance(
         maintenanceData
           .filter((item) => item.status === 'Pending')
@@ -151,6 +161,9 @@ const Dashboard = () => {
           <div className="flex flex-wrap gap-3">
             <Badge className="bg-white/15 text-white border border-white/10">
               Last sync: {summary?.lastUpdatedAt ? new Date(summary.lastUpdatedAt).toLocaleTimeString() : 'Just now'}
+            </Badge>
+            <Badge className="bg-white/15 text-white border border-white/10">
+              Pending bookings: {summary?.pendingBookingRequests || 0}
             </Badge>
             <Button variant="outline" className="border-white/30 text-white hover:bg-white hover:text-slate-900" onClick={loadDashboard}>
               Refresh Dashboard
@@ -252,28 +265,61 @@ const Dashboard = () => {
           </div>
         </Card>
 
-        <Card
-          title="Pending Maintenance"
-          subtitle="Rooms needing attention first"
-          action={<Link to="/admin/maintenance" className="text-sm text-primary dark:text-blue-400 hover:underline">Open tracker</Link>}
-        >
-          <div className="space-y-3">
-            {maintenance.length === 0 ? (
-              <p className="text-sm text-gray-500 dark:text-gray-400">No pending issues at the moment.</p>
-            ) : (
-              maintenance.map((request) => (
-                <div key={request.request_id} className="rounded-2xl bg-gray-50 dark:bg-slate-700/50 p-4">
-                  <div className="flex items-center justify-between">
-                    <p className="font-semibold text-gray-900 dark:text-white">Room {request.room_number}</p>
-                    <Badge variant="warning">{request.status}</Badge>
+        <div className="space-y-6">
+          <Card
+            title="Room Booking Requests"
+            subtitle="Latest student room bookings waiting for review"
+          >
+            <div className="space-y-3">
+              {bookingRequests.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400">No pending room booking requests right now.</p>
+              ) : (
+                bookingRequests.map((booking) => (
+                  <div key={booking.booking_id} className="rounded-2xl bg-gray-50 dark:bg-slate-700/50 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-gray-900 dark:text-white">{booking.student_name}</p>
+                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                          {booking.room_title} • {booking.room_category}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {booking.student_email || 'Email not available'}
+                        </p>
+                        <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                          Requested on {formatDateTime(booking.requested_at)}
+                        </p>
+                      </div>
+                      <Badge variant={getBookingBadgeVariant(booking.status)}>{booking.status}</Badge>
+                    </div>
                   </div>
-                  <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">{request.issue_type}</p>
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{formatDate(request.date_reported)}</p>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
+                ))
+              )}
+            </div>
+          </Card>
+
+          <Card
+            title="Pending Maintenance"
+            subtitle="Rooms needing attention first"
+            action={<Link to="/admin/maintenance" className="text-sm text-primary dark:text-blue-400 hover:underline">Open tracker</Link>}
+          >
+            <div className="space-y-3">
+              {maintenance.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400">No pending issues at the moment.</p>
+              ) : (
+                maintenance.map((request) => (
+                  <div key={request.request_id} className="rounded-2xl bg-gray-50 dark:bg-slate-700/50 p-4">
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold text-gray-900 dark:text-white">Room {request.room_number}</p>
+                      <Badge variant="warning">{request.status}</Badge>
+                    </div>
+                    <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">{request.issue_type}</p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{formatDate(request.date_reported)}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </Card>
+        </div>
       </div>
 
       {user?.role === 'SuperAdmin' && (

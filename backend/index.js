@@ -343,6 +343,8 @@ const ensurePublicRoomShowcaseTable = async () => {
     return;
   }
 
+  await ensureStudentsTable();
+
   const pool = await getPool();
 
   await pool.request().query(`
@@ -1080,6 +1082,24 @@ const publicRoomShowcaseSelectQuery = `
     END AS availability_status,
     prs.Sort_Order AS sort_order
   FROM Public_Room_Showcase prs
+`;
+
+const studentRoomBookingSelectQuery = `
+  SELECT
+    srb.Booking_id AS id,
+    srb.Booking_id AS booking_id,
+    srb.Showcase_Room_id AS room_id,
+    prs.Room_Name AS room_title,
+    prs.Category AS room_category,
+    CONCAT('$', prs.Price_Min, ' - $', prs.Price_Max, ' ', prs.Price_Unit) AS price_range,
+    srb.Requested_At AS requested_at,
+    srb.Status AS status,
+    s.Student_id AS student_id,
+    s.Name AS student_name,
+    s.Email AS student_email
+  FROM Student_Room_Booking_Request srb
+  INNER JOIN Public_Room_Showcase prs ON prs.Showcase_Room_id = srb.Showcase_Room_id
+  INNER JOIN ${STUDENT_TABLE} s ON s.Student_id = srb.Student_id
 `;
 
 const blockSelectQuery = `
@@ -2783,6 +2803,7 @@ const updateStudentProfile = async (req, res) => {
 
 const getStudentDashboard = async (req, res) => {
   await ensureStudentsTable();
+  await ensurePublicRoomShowcaseTable();
 
   const studentId = parsePositiveInt(req.user?.id);
 
@@ -2869,6 +2890,7 @@ protectedRouter.use(authorizeRoles("Admin"));
 protectedRouter.use(
   asyncHandler(async (req, res, next) => {
     await ensureStudentsTable();
+    await ensurePublicRoomShowcaseTable();
     next();
   })
 );
@@ -2883,6 +2905,7 @@ protectedRouter.get(
         (SELECT COUNT(*) FROM Room WHERE Current_Occupancy >= Capacity) AS occupiedRooms,
         (SELECT COUNT(*) FROM Room WHERE Current_Occupancy < Capacity) AS availableRooms,
         (SELECT COUNT(*) FROM Maintenance WHERE Status = 'Pending') AS pendingMaintenance,
+        (SELECT COUNT(*) FROM Student_Room_Booking_Request WHERE Status = 'Pending') AS pendingBookingRequests,
         (SELECT ISNULL(SUM(Amount), 0) FROM Payment) AS totalCollection
     `);
 
@@ -2890,6 +2913,39 @@ protectedRouter.get(
       ...summary,
       lastUpdatedAt: new Date().toISOString(),
     });
+  })
+);
+
+protectedRouter.get(
+  "/booking-requests",
+  asyncHandler(async (req, res) => {
+    const requestedStatus = normalizeString(req.query.status);
+    const normalizedStatus = requestedStatus
+      ? BOOKING_REQUEST_STATUSES.find(
+          (status) => status.toLowerCase() === requestedStatus.toLowerCase()
+        )
+      : null;
+
+    if (requestedStatus && !normalizedStatus) {
+      res.status(400).json({
+        message: `Invalid status. Allowed values: ${BOOKING_REQUEST_STATUSES.join(", ")}.`,
+      });
+      return;
+    }
+
+    const whereClause = normalizedStatus ? "WHERE srb.Status = @status" : "";
+    const rows = await queryRows(
+      `
+        ${studentRoomBookingSelectQuery}
+        ${whereClause}
+        ORDER BY srb.Requested_At DESC, srb.Booking_id DESC
+      `,
+      normalizedStatus
+        ? (request) => request.input("status", sql.NVarChar(20), normalizedStatus)
+        : undefined
+    );
+
+    res.json(rows);
   })
 );
 
@@ -4864,8 +4920,9 @@ app.get(
 app.post(
   "/api/public/rooms/:id/book",
   authenticateToken,
-  authorizeRoles("Admin"),
+  authorizeRoles("Student"),
   asyncHandler(async (req, res) => {
+    await ensureStudentsTable();
     await ensurePublicRoomShowcaseTable();
 
     const roomId = parsePositiveInt(req.params.id);
@@ -4887,25 +4944,32 @@ app.post(
       return;
     }
 
-    const userId = parsePositiveInt(req.user?.id);
+    const studentId = parsePositiveInt(req.user?.id);
 
-    if (!userId) {
+    if (!studentId) {
       res.status(401).json({ message: "You need to sign in before booking a room." });
+      return;
+    }
+
+    const student = await getStudentAuthProfileById(studentId);
+
+    if (!student) {
+      res.status(404).json({ message: "Student account not found." });
       return;
     }
 
     const pendingBooking = await queryOne(
       `
         SELECT TOP 1 Booking_id AS booking_id
-        FROM Room_Booking_Request
+        FROM Student_Room_Booking_Request
         WHERE Showcase_Room_id = @roomId
-          AND User_id = @userId
+          AND Student_id = @studentId
           AND Status = 'Pending'
       `,
       (request) =>
         request
           .input("roomId", sql.Int, roomId)
-          .input("userId", sql.Int, userId)
+          .input("studentId", sql.Int, studentId)
     );
 
     if (pendingBooking) {
@@ -4915,14 +4979,14 @@ app.post(
 
     const insertResult = await executeQuery(
       `
-        INSERT INTO Room_Booking_Request (Showcase_Room_id, User_id, Status)
+        INSERT INTO Student_Room_Booking_Request (Showcase_Room_id, Student_id, Status)
         OUTPUT INSERTED.Booking_id AS booking_id, INSERTED.Status AS status, INSERTED.Requested_At AS requested_at
-        VALUES (@roomId, @userId, @status)
+        VALUES (@roomId, @studentId, @status)
       `,
       (request) =>
         request
           .input("roomId", sql.Int, roomId)
-          .input("userId", sql.Int, userId)
+          .input("studentId", sql.Int, studentId)
           .input("status", sql.NVarChar(20), BOOKING_REQUEST_STATUSES[0])
     );
 
@@ -4935,6 +4999,10 @@ app.post(
         id: room.id,
         title: room.title,
         category: room.category,
+      },
+      student: {
+        id: student.student_id,
+        name: student.name,
       },
     });
   })

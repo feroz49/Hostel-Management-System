@@ -198,7 +198,7 @@ const PublicRoomDetails = () => {
                     </Button>
                     {!isAuthenticated && isAvailable && (
                       <p className="mt-3 text-xs text-slate-400">
-                        You will be redirected to student login if you book without signing in.
+                        You will be redirected to the student login page if you try to book without signing in.
                       </p>
                     )}
                   </div>
