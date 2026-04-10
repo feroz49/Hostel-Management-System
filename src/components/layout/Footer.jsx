@@ -43,12 +43,14 @@ const Footer = ({ variant = 'public' }) => {
     ? [
         { label: 'Dashboard', to: '/admin' },
         { label: 'Students', to: '/admin/students' },
+        { label: 'Bookings', to: '/admin/bookings' },
         { label: 'Rooms', to: '/admin/rooms' },
         { label: 'Profile', to: '/admin/profile' },
       ]
     : variant === 'student'
       ? [
           { label: 'Dashboard', to: '/student' },
+          { label: 'Room Payment', to: '/student/payment' },
           { label: 'Profile', to: '/student/profile' },
           { label: 'Rooms', to: '/rooms' },
           { label: 'Contact', to: '/contact' },
