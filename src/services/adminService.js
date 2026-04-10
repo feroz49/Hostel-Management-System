@@ -24,6 +24,10 @@ export const dashboardService = {
   getSummary: () => fetchResource('/dashboard/summary'),
 }
 
+export const bookingRequestsService = {
+  getAll: (params) => fetchResource(params?.status ? `/booking-requests?status=${encodeURIComponent(params.status)}` : '/booking-requests'),
+}
+
 export const adminInviteService = {
   create: async (payload) => {
     const token = localStorage.getItem(STORAGE_KEYS.token)
@@ -78,6 +82,10 @@ export const paymentsService = {
   create: (payload) => createResource('/payments', payload),
   update: (id, payload) => updateResource('/payments', id, payload),
   remove: (id) => deleteResource('/payments', id),
+}
+
+export const bookingsService = {
+  getAll: () => fetchResource('/bookings'),
 }
 
 export const feesService = {

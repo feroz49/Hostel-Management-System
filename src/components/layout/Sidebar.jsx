@@ -5,6 +5,7 @@ import {
   DoorOpen,
   Building2,
   ClipboardList,
+  ClipboardCheck,
   CreditCard,
   Receipt,
   Utensils,
@@ -23,6 +24,7 @@ const adminNavItems = [
   { path: '/admin/rooms', label: 'Rooms', icon: DoorOpen },
   { path: '/admin/blocks', label: 'Hostel Blocks', icon: Building2 },
   { path: '/admin/visitors', label: 'Visitors', icon: ClipboardList },
+  { path: '/admin/bookings', label: 'Bookings', icon: ClipboardCheck },
   { path: '/admin/payments', label: 'Payments', icon: CreditCard },
   { path: '/admin/fees', label: 'Fee Structure', icon: Receipt },
   { path: '/admin/mess', label: 'Mess Menu', icon: Utensils },
@@ -32,6 +34,7 @@ const adminNavItems = [
 
 const studentNavItems = [
   { path: '/student', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { path: '/student/payment', label: 'Room Payment', icon: CreditCard },
   { path: '/student/profile', label: 'Profile', icon: UserCog },
 ]
 

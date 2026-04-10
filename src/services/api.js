@@ -79,7 +79,7 @@ api.interceptors.response.use(
     const sessionType = localStorage.getItem(STORAGE_KEYS.sessionType)
     const loginPath = sessionType === 'student' ? '/student/login' : '/login'
     const shouldRedirect =
-      (error.response?.status === 401 || error.response?.status === 403) &&
+      error.response?.status === 401 &&
       hasStoredSession &&
       typeof window !== 'undefined' &&
       !window.location.pathname.startsWith('/login') &&

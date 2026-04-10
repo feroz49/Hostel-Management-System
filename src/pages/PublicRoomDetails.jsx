@@ -10,6 +10,7 @@ import { useAuth } from '../auth/AuthContext'
 import { getApiErrorMessage } from '../services/api'
 import publicRoomsService from '../services/publicRoomsService'
 import { handleRoomImageError } from '../utils/roomImageFallback'
+import { buildStudentPaymentPath, saveBookingIntent } from '../utils/bookingIntent'
 
 const categoryLabels = {
   single: 'Single Room',
@@ -22,13 +23,11 @@ const PublicRoomDetails = () => {
   const { roomId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
 
   const [room, setRoom] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [booking, setBooking] = useState(false)
-
   useEffect(() => {
     let active = true
 
@@ -60,7 +59,7 @@ const PublicRoomDetails = () => {
     }
   }, [roomId])
 
-  const handleBook = async () => {
+  const handleBook = () => {
     if (!room) {
       return
     }
@@ -70,20 +69,33 @@ const PublicRoomDetails = () => {
       return
     }
 
-    if (!isAuthenticated) {
-      navigate('/login', { state: { from: location } })
+    saveBookingIntent({
+      roomId: room.id,
+      roomTitle: room.title,
+      priceRange: room.price_range,
+    })
+
+    const paymentPath = buildStudentPaymentPath(room.id)
+
+    if (!isAuthenticated || user?.role !== 'Student') {
+      navigate('/student/login', {
+        state: {
+          from: {
+            pathname: '/student/payment',
+            search: `?roomId=${room.id}`,
+          },
+          bookingIntent: {
+            roomId: room.id,
+            roomTitle: room.title,
+            priceRange: room.price_range,
+          },
+          sourcePath: location.pathname,
+        },
+      })
       return
     }
 
-    setBooking(true)
-    try {
-      const response = await publicRoomsService.bookRoom(room.id)
-      toast.success(response.message || 'Booking request sent successfully.')
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, 'Failed to submit booking request.'))
-    } finally {
-      setBooking(false)
-    }
+    navigate(paymentPath)
   }
 
   const isAvailable = Boolean(room?.is_available)
@@ -178,16 +190,15 @@ const PublicRoomDetails = () => {
                     <Button
                       type="button"
                       onClick={handleBook}
-                      loading={booking}
                       disabled={!isAvailable}
                       size="lg"
                       className="w-full"
                     >
-                      {isAvailable ? 'Book This Room' : 'Unavailable for Booking'}
+                      {isAvailable ? 'Book & Continue to Payment' : 'Unavailable for Booking'}
                     </Button>
                     {!isAuthenticated && isAvailable && (
                       <p className="mt-3 text-xs text-slate-400">
-                        You will be redirected to login if you try to book without signing in.
+                        You will be redirected to the student login page if you try to book without signing in.
                       </p>
                     )}
                   </div>
